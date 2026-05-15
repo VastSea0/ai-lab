@@ -5,8 +5,11 @@ import {
   Activity,
   BarChart3,
   BrainCircuit,
-  ChevronDown,
+  BookOpen,
   Database,
+  Eye,
+  ImageIcon,
+  Layers,
   Minus,
   Pause,
   Play,
@@ -20,26 +23,32 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivationName,
   DataPoint,
   EdgeSnapshot,
+  LayerConfig,
   NeuralNetwork,
   NeuronSnapshot,
   Selection,
   TrainingPhase,
   TrainingTrace,
+  activationLabel,
   edgeId,
   formatNumber,
   sanitizePointValue
 } from "@/lib/ml/network";
+import { TASKS, Task, TaskId } from "@/lib/ml/tasks";
 
-const DEFAULT_DATA: DataPoint[] = [
-  { id: "p1", x: 0.08, y: 0.14 },
-  { id: "p2", x: 0.2, y: 0.22 },
-  { id: "p3", x: 0.36, y: 0.5 },
-  { id: "p4", x: 0.54, y: 0.62 },
-  { id: "p5", x: 0.74, y: 0.84 },
-  { id: "p6", x: 0.92, y: 0.91 }
-];
+interface EpochEntry {
+  epoch: number;
+  lossBefore: number;
+  lossAfter: number;
+  sampleName: string;
+  prediction: number[];
+  predictionAfter: number[];
+  target: number[];
+  learningRate: number;
+}
 
 interface ModelState {
   network: NeuralNetwork;
@@ -47,25 +56,60 @@ interface ModelState {
   lossHistory: number[];
   epoch: number;
   seed: number;
+  history: EpochEntry[];
 }
 
-function createModelState(seed: number, data: DataPoint[], sizes = [1, 4, 1]): ModelState {
-  const network = NeuralNetwork.create(sizes, seed);
-  const first = data[0] ?? { id: "empty", x: 0, y: 0 };
-  const trace = network.inspect([first.x], [first.y]);
+function firstTrace(network: NeuralNetwork, data: DataPoint[]) {
+  const first = data[0] ?? {
+    id: "empty",
+    inputs: Array(network.getLayerSizes()[0]).fill(0),
+    targets: Array(network.getLayerSizes().at(-1) ?? 1).fill(0)
+  };
+  return network.inspect(first.inputs, first.targets);
+}
+
+function createModelState(seed: number, task: Task, data = task.data): ModelState {
+  const network = NeuralNetwork.create(task.defaultLayers, seed);
+  const trace = firstTrace(network, data);
   return {
     network,
     trace,
     lossHistory: [network.evaluateLoss(data)],
     epoch: 0,
-    seed
+    seed,
+    history: []
   };
 }
 
+function targetName(task: Task, target: number[]) {
+  if (task.outputType === "regression") return formatNumber(target[0] ?? 0, 3);
+  const index = target.indexOf(Math.max(...target));
+  return task.classNames?.[index] ?? `Sınıf ${index}`;
+}
+
+function predictionName(task: Task, prediction: number[]) {
+  if (task.outputType === "regression") return formatNumber(prediction[0] ?? 0, 3);
+  const index = prediction.indexOf(Math.max(...prediction));
+  return `${task.classNames?.[index] ?? `Sınıf ${index}`} (${formatNumber(
+    prediction[index] ?? 0,
+    3
+  )})`;
+}
+
+function cloneData(data: DataPoint[]) {
+  return data.map((point) => ({
+    ...point,
+    inputs: [...point.inputs],
+    targets: [...point.targets]
+  }));
+}
+
 export function SandboxApp() {
-  const [data, setData] = useState<DataPoint[]>(DEFAULT_DATA);
-  const [model, setModel] = useState<ModelState>(() => createModelState(1327, DEFAULT_DATA));
-  const [learningRate, setLearningRate] = useState(0.18);
+  const [taskId, setTaskId] = useState<TaskId>("regression");
+  const task = useMemo(() => TASKS.find((item) => item.id === taskId) ?? TASKS[0], [taskId]);
+  const [data, setData] = useState<DataPoint[]>(() => cloneData(task.data));
+  const [model, setModel] = useState<ModelState>(() => createModelState(1327, task));
+  const [learningRate, setLearningRate] = useState(task.defaultLearningRate);
   const [running, setRunning] = useState(false);
   const [phase, setPhase] = useState<TrainingPhase>("idle");
   const [selected, setSelected] = useState<Selection | null>(null);
@@ -81,26 +125,93 @@ export function SandboxApp() {
     clearPhaseTimers();
     setPhase("forward");
     timers.current = [
-      window.setTimeout(() => setPhase("backward"), 520),
-      window.setTimeout(() => setPhase("idle"), 1100)
+      window.setTimeout(() => setPhase("backward"), 560),
+      window.setTimeout(() => setPhase("idle"), 1220)
     ];
   }, [clearPhaseTimers]);
 
-  const inspectWithData = useCallback((network: NeuralNetwork, nextData: DataPoint[]) => {
-    const first = nextData[0] ?? { id: "empty", x: 0, y: 0 };
-    return network.inspect([first.x], [first.y]);
+  useEffect(() => () => clearPhaseTimers(), [clearPhaseTimers]);
+
+  const switchTask = useCallback((nextTaskId: TaskId) => {
+    const nextTask = TASKS.find((item) => item.id === nextTaskId) ?? TASKS[0];
+    const nextData = cloneData(nextTask.data);
+    setRunning(false);
+    setSelected(null);
+    setHovered(null);
+    setTaskId(nextTask.id);
+    setData(nextData);
+    setLearningRate(nextTask.defaultLearningRate);
+    setModel((previous) => createModelState(previous.seed + 131, nextTask, nextData));
   }, []);
+
+  const rebuildNetwork = useCallback(
+    (configs: LayerConfig[]) => {
+      setRunning(false);
+      setSelected(null);
+      setHovered(null);
+      setModel((previous) => {
+        const seed = previous.seed + 97;
+        const next = NeuralNetwork.create(configs, seed);
+        return {
+          network: next,
+          trace: firstTrace(next, data),
+          lossHistory: [next.evaluateLoss(data)],
+          epoch: 0,
+          seed,
+          history: []
+        };
+      });
+    },
+    [data]
+  );
+
+  const resetWeights = useCallback(() => {
+    rebuildNetwork(model.network.getLayerConfigs());
+  }, [model.network, rebuildNetwork]);
+
+  const updateData = useCallback(
+    (nextData: DataPoint[]) => {
+      const clean = cloneData(nextData);
+      setData(clean);
+      setModel((previous) => {
+        const network = previous.network.clone();
+        return {
+          ...previous,
+          network,
+          trace: firstTrace(network, clean),
+          lossHistory: [network.evaluateLoss(clean)],
+          epoch: 0,
+          history: []
+        };
+      });
+    },
+    []
+  );
 
   const runEpoch = useCallback(() => {
     setModel((previous) => {
       const nextNetwork = previous.network.clone();
+      const lossBefore = nextNetwork.evaluateLoss(data);
       const trace = nextNetwork.trainEpoch(data, learningRate);
+      const lossAfter = nextNetwork.evaluateLoss(data);
+      const point = data.find((item) => item.id === trace.sampleId) ?? data.at(-1);
+      const entry: EpochEntry = {
+        epoch: previous.epoch + 1,
+        lossBefore,
+        lossAfter,
+        sampleName: point?.label ?? point?.id ?? "örnek",
+        prediction: trace.prediction,
+        predictionAfter: trace.predictionAfter,
+        target: trace.target,
+        learningRate
+      };
       return {
         ...previous,
         network: nextNetwork,
         trace,
         epoch: previous.epoch + 1,
-        lossHistory: [...previous.lossHistory, trace.epochLoss].slice(-140)
+        lossHistory: [...previous.lossHistory, lossAfter].slice(-160),
+        history: [entry, ...previous.history].slice(0, 8)
       };
     });
     playPhaseAnimation();
@@ -108,73 +219,34 @@ export function SandboxApp() {
 
   useEffect(() => {
     if (!running) return undefined;
-    const interval = window.setInterval(runEpoch, 1180);
+    const interval = window.setInterval(runEpoch, 1250);
     return () => window.clearInterval(interval);
   }, [running, runEpoch]);
 
-  useEffect(() => {
-    return () => clearPhaseTimers();
-  }, [clearPhaseTimers]);
-
-  const rebuildNetwork = useCallback(
-    (sizes: number[]) => {
-      setRunning(false);
-      setSelected(null);
-      setHovered(null);
-      setModel((previous) => {
-        const seed = previous.seed + 97;
-        const next = NeuralNetwork.create(sizes, seed);
-        return {
-          network: next,
-          trace: inspectWithData(next, data),
-          lossHistory: [next.evaluateLoss(data)],
-          epoch: 0,
-          seed
-        };
-      });
-    },
-    [data, inspectWithData]
-  );
-
-  const resetWeights = useCallback(() => {
-    rebuildNetwork(model.network.getLayerSizes());
-  }, [model.network, rebuildNetwork]);
-
-  const updateData = useCallback(
-    (nextData: DataPoint[]) => {
-      setData(nextData);
-      setModel((previous) => {
-        const network = previous.network.clone();
-        return {
-          ...previous,
-          network,
-          trace: inspectWithData(network, nextData),
-          lossHistory: [network.evaluateLoss(nextData)],
-          epoch: 0
-        };
-      });
-    },
-    [inspectWithData]
-  );
-
   const activeSelection = hovered ?? selected;
+  const accuracy = task.outputType === "classification" ? model.network.evaluateAccuracy(data) : null;
 
   return (
-    <main className="h-screen min-h-[720px] min-w-[1120px] overflow-hidden bg-[#f5f7fb] text-[#18202f]">
-      <div className="grid h-full grid-cols-[300px_minmax(0,1fr)_360px] grid-rows-[minmax(0,1fr)_176px] gap-px bg-[#d7dde8]">
+    <main className="h-screen min-h-[760px] min-w-[1180px] overflow-hidden bg-[#f5f7fb] text-[#18202f]">
+      <div className="grid h-full grid-cols-[318px_minmax(0,1fr)_390px] grid-rows-[minmax(0,1fr)_214px] gap-px bg-[#d7dde8]">
         <ArchitecturePanel
+          task={task}
+          taskId={taskId}
           network={model.network}
+          onTaskChange={switchTask}
           onRebuild={rebuildNetwork}
           onResetWeights={resetWeights}
         />
 
         <section className="relative overflow-hidden bg-[#eef3f8]">
-          <div className="absolute left-5 top-4 z-10 flex items-center gap-3 rounded-md border border-[#c8d3e1] bg-white/92 px-3 py-2 shadow-panel">
-            <BrainCircuit className="h-5 w-5 text-[#2563eb]" />
-            <div>
-              <div className="text-sm font-semibold">Görsel Sinir Ağı Sandbox</div>
-              <div className="text-xs text-[#607089]">
-                Epoch {model.epoch} · Loss {formatNumber(model.lossHistory.at(-1) ?? 0, 5)}
+          <div className="absolute left-5 top-4 z-10 flex max-w-[520px] items-center gap-3 rounded-md border border-[#c8d3e1] bg-white/94 px-3 py-2 shadow-panel">
+            <BrainCircuit className="h-5 w-5 shrink-0 text-[#2563eb]" />
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold">Görsel Sinir Ağı Sandbox</div>
+              <div className="truncate text-xs text-[#607089]">
+                {task.name} · Epoch {model.epoch} · Loss{" "}
+                {formatNumber(model.lossHistory.at(-1) ?? 0, 5)}
+                {accuracy !== null ? ` · Doğruluk ${formatNumber(accuracy * 100, 1)}%` : ""}
               </div>
             </div>
           </div>
@@ -190,6 +262,7 @@ export function SandboxApp() {
         </section>
 
         <InspectorPanel
+          task={task}
           selection={activeSelection}
           trace={model.trace}
           network={model.network}
@@ -198,12 +271,15 @@ export function SandboxApp() {
         />
 
         <TrainingPanel
+          task={task}
           epoch={model.epoch}
+          history={model.history}
           lossHistory={model.lossHistory}
           learningRate={learningRate}
           running={running}
           phase={phase}
           trace={model.trace}
+          accuracy={accuracy}
           onLearningRateChange={setLearningRate}
           onStep={runEpoch}
           onToggleRun={() => {
@@ -218,55 +294,105 @@ export function SandboxApp() {
 }
 
 interface ArchitecturePanelProps {
+  task: Task;
+  taskId: TaskId;
   network: NeuralNetwork;
-  onRebuild: (sizes: number[]) => void;
+  onTaskChange: (taskId: TaskId) => void;
+  onRebuild: (configs: LayerConfig[]) => void;
   onResetWeights: () => void;
 }
 
-function ArchitecturePanel({ network, onRebuild, onResetWeights }: ArchitecturePanelProps) {
-  const sizes = network.getLayerSizes();
-  const hiddenSizes = sizes.slice(1, -1);
+function ArchitecturePanel({
+  task,
+  taskId,
+  network,
+  onTaskChange,
+  onRebuild,
+  onResetWeights
+}: ArchitecturePanelProps) {
+  const configs = network.getLayerConfigs();
+  const hiddenConfigs = configs.slice(1, -1);
 
-  const rebuildHidden = (nextHidden: number[]) => {
-    onRebuild([1, ...nextHidden, 1]);
+  const rebuildHidden = (nextHidden: LayerConfig[]) => {
+    onRebuild([configs[0], ...nextHidden, configs.at(-1) ?? { size: task.outputSize }]);
+  };
+
+  const updateActivation = (layerIndex: number, activation: ActivationName) => {
+    const next = configs.map((config, index) =>
+      index === layerIndex ? { ...config, activation } : { ...config }
+    );
+    onRebuild(next);
   };
 
   return (
     <aside className="row-span-1 overflow-y-auto bg-white px-4 py-4">
       <PanelTitle icon={<Sigma className="h-5 w-5" />} title="Ağ Mimarisi" />
 
+      <label className="mt-4 block">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+          Öğrenme görevi
+        </span>
+        <select
+          className="mt-2 h-10 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold"
+          value={taskId}
+          onChange={(event) => onTaskChange(event.target.value as TaskId)}
+        >
+          {TASKS.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name} - {item.description}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <div className="mt-4 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3 text-sm leading-5 text-[#334155]">
+        <div className="mb-1 font-semibold">{task.name}</div>
+        {task.explanation}
+      </div>
+
       <div className="mt-5 space-y-3">
-        <LayerRow label="Input" detail="x" count={sizes[0]} locked />
-        {hiddenSizes.map((count, index) => (
-          <LayerRow
-            key={`hidden-${index}`}
-            label={`Hidden ${index + 1}`}
-            detail="sigmoid"
-            count={count}
-            onDecrease={() => {
-              const next = [...hiddenSizes];
-              next[index] = Math.max(1, next[index] - 1);
-              rebuildHidden(next);
-            }}
-            onIncrease={() => {
-              const next = [...hiddenSizes];
-              next[index] = Math.min(6, next[index] + 1);
-              rebuildHidden(next);
-            }}
-            onRemove={() => {
-              rebuildHidden(hiddenSizes.filter((_, itemIndex) => itemIndex !== index));
-            }}
-          />
-        ))}
-        <LayerRow label="Output" detail="linear" count={sizes.at(-1) ?? 1} locked />
+        <LayerRow label="Input" detail={`${task.inputSize} özellik`} count={configs[0].size} locked />
+        {hiddenConfigs.map((config, index) => {
+          const layerIndex = index + 1;
+          return (
+            <LayerRow
+              key={`hidden-${index}`}
+              label={`Hidden ${index + 1}`}
+              detail={activationLabel(config.activation ?? "sigmoid")}
+              count={config.size}
+              activation={config.activation ?? "sigmoid"}
+              onActivationChange={(activation) => updateActivation(layerIndex, activation)}
+              onDecrease={() => {
+                const next = [...hiddenConfigs];
+                next[index] = { ...next[index], size: Math.max(1, next[index].size - 1) };
+                rebuildHidden(next);
+              }}
+              onIncrease={() => {
+                const max = task.inputSize > 10 ? 18 : 10;
+                const next = [...hiddenConfigs];
+                next[index] = { ...next[index], size: Math.min(max, next[index].size + 1) };
+                rebuildHidden(next);
+              }}
+              onRemove={() => {
+                rebuildHidden(hiddenConfigs.filter((_, itemIndex) => itemIndex !== index));
+              }}
+            />
+          );
+        })}
+        <LayerRow
+          label="Output"
+          detail={`${task.outputSize} çıktı · ${activationLabel(configs.at(-1)?.activation ?? "linear")}`}
+          count={configs.at(-1)?.size ?? task.outputSize}
+          locked
+        />
       </div>
 
       <div className="mt-5 grid grid-cols-2 gap-2">
         <ActionButton
           icon={<Plus className="h-4 w-4" />}
           label="Katman"
-          onClick={() => rebuildHidden([...hiddenSizes, 3])}
-          disabled={hiddenSizes.length >= 4}
+          onClick={() => rebuildHidden([...hiddenConfigs, { size: task.inputSize > 10 ? 8 : 4, activation: "sigmoid" }])}
+          disabled={hiddenConfigs.length >= 4}
         />
         <ActionButton
           icon={<RotateCcw className="h-4 w-4" />}
@@ -275,26 +401,7 @@ function ArchitecturePanel({ network, onRebuild, onResetWeights }: ArchitectureP
         />
       </div>
 
-      <div className="mt-6 border-t border-[#e2e8f0] pt-4">
-        <div className="mb-3 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
-          Katmanlar
-        </div>
-        <div className="space-y-2">
-          {network.layers.map((layer) => (
-            <div
-              key={layer.id}
-              className="flex items-center justify-between rounded-md border border-[#e2e8f0] px-3 py-2"
-            >
-              <span className="text-sm font-medium">
-                L{layer.layerIndex} · {layer.kind}
-              </span>
-              <span className="text-xs text-[#64748b]">
-                {layer.neurons.length} nöron · {layer.activation}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
+      <LearningGuide task={task} />
     </aside>
   );
 }
@@ -304,6 +411,8 @@ interface LayerRowProps {
   detail: string;
   count: number;
   locked?: boolean;
+  activation?: ActivationName;
+  onActivationChange?: (activation: ActivationName) => void;
   onDecrease?: () => void;
   onIncrease?: () => void;
   onRemove?: () => void;
@@ -314,25 +423,24 @@ function LayerRow({
   detail,
   count,
   locked,
+  activation,
+  onActivationChange,
   onDecrease,
   onIncrease,
   onRemove
 }: LayerRowProps) {
   return (
     <div className="rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3">
-      <div className="mb-3 flex items-center justify-between">
-        <div>
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
           <div className="text-sm font-semibold">{label}</div>
-          <div className="text-xs text-[#64748b]">{detail}</div>
+          <div className="mt-0.5 text-xs text-[#64748b]">{detail}</div>
         </div>
-        <div className="flex items-center gap-1">
-          {!locked && (
-            <IconButton title="Katmanı sil" onClick={onRemove}>
-              <Trash2 className="h-4 w-4" />
-            </IconButton>
-          )}
-          {locked && <ChevronDown className="h-4 w-4 text-[#94a3b8]" />}
-        </div>
+        {!locked && (
+          <IconButton title="Katmanı sil" onClick={onRemove}>
+            <Trash2 className="h-4 w-4" />
+          </IconButton>
+        )}
       </div>
       <div className="flex items-center justify-between">
         <IconButton title="Nöron azalt" disabled={locked || count <= 1} onClick={onDecrease}>
@@ -341,10 +449,56 @@ function LayerRow({
         <div className="h-9 min-w-16 rounded-md border border-[#cbd5e1] bg-white px-4 py-2 text-center text-sm font-semibold">
           {count}
         </div>
-        <IconButton title="Nöron artır" disabled={locked || count >= 6} onClick={onIncrease}>
+        <IconButton title="Nöron artır" disabled={locked} onClick={onIncrease}>
           <Plus className="h-4 w-4" />
         </IconButton>
       </div>
+      {activation && onActivationChange && (
+        <select
+          className="mt-3 h-9 w-full rounded-md border border-[#cbd5e1] bg-white px-2 text-xs"
+          value={activation}
+          onChange={(event) => onActivationChange(event.target.value as ActivationName)}
+        >
+          <option value="sigmoid">Sigmoid</option>
+          <option value="tanh">Tanh</option>
+          <option value="relu">ReLU</option>
+        </select>
+      )}
+    </div>
+  );
+}
+
+function LearningGuide({ task }: { task: Task }) {
+  const imageCopy =
+    task.id === "digit"
+      ? "Bu görevde her piksel bir giriş nöronudur. Beyaz piksel 0, dolu piksel 1 gibi düşünülür; ağ çizgileri ve şekilleri sayı tahminine çevirir."
+      : "Görüntü tanımada da aynı matematik çalışır: x değerleri piksel parlaklıkları olur, ağ bunlardan kenar, çizgi ve sınıf sinyalleri üretmeyi öğrenir.";
+
+  return (
+    <div className="mt-6 space-y-3 border-t border-[#e2e8f0] pt-4">
+      <PanelTitle icon={<BookOpen className="h-5 w-5" />} title="Başlangıç Rehberi" compact />
+      <GuideItem
+        title="1. Forward pass"
+        text="Girdi değerleri çizgilerden akar. Her nöron önce Σ(x×w)+b hesabını yapar, sonra aktivasyon fonksiyonundan geçirir."
+      />
+      <GuideItem
+        title="2. Loss"
+        text="Tahmin hedefe uzaksa loss büyür. Loss, ağın ne kadar yanıldığını tek bir sayıya indirir."
+      />
+      <GuideItem
+        title="3. Backpropagation"
+        text="Hata geriye doğru paylaşılır. Büyük katkı yapan bağlantı daha büyük gradient alır ve ağırlığı daha fazla değişir."
+      />
+      <GuideItem title="4. Resim mantığı" text={imageCopy} />
+    </div>
+  );
+}
+
+function GuideItem({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="rounded-md border border-[#dbe3ee] bg-white p-3">
+      <div className="text-xs font-semibold text-[#18202f]">{title}</div>
+      <div className="mt-1 text-xs leading-5 text-[#526070]">{text}</div>
     </div>
   );
 }
@@ -368,21 +522,21 @@ function NetworkCanvas({
   onSelect,
   onHover
 }: NetworkCanvasProps) {
-  const width = 940;
-  const height = 590;
+  const width = 980;
+  const height = 612;
   const positions = useMemo(() => {
     const map = new Map<string, { x: number; y: number; radius: number }>();
-    const left = 95;
-    const right = width - 95;
-    const usableHeight = height - 165;
+    const left = 92;
+    const right = width - 92;
     const layerGap =
       network.layers.length <= 1 ? 0 : (right - left) / (network.layers.length - 1);
 
     network.layers.forEach((layer, layerIndex) => {
       const neuronCount = layer.neurons.length;
-      const gap = neuronCount <= 1 ? 0 : Math.min(94, usableHeight / (neuronCount - 1));
-      const startY = height / 2 - (gap * (neuronCount - 1)) / 2 + 15;
-      const radius = Math.max(17, Math.min(24, gap ? gap * 0.27 : 23));
+      const usableHeight = height - 170;
+      const gap = neuronCount <= 1 ? 0 : Math.min(64, usableHeight / (neuronCount - 1));
+      const radius = neuronCount > 16 ? 8 : neuronCount > 10 ? 11 : Math.max(15, Math.min(23, gap * 0.28 || 22));
+      const startY = height / 2 - (gap * (neuronCount - 1)) / 2 + 16;
       layer.neurons.forEach((neuron, neuronIndex) => {
         map.set(neuron.id, {
           x: left + layerIndex * layerGap,
@@ -414,7 +568,7 @@ function NetworkCanvas({
       <defs>
         <linearGradient id="canvasWash" x1="0" x2="1" y1="0" y2="1">
           <stop offset="0%" stopColor="#f8fbff" />
-          <stop offset="58%" stopColor="#eef6f2" />
+          <stop offset="52%" stopColor="#eef6f2" />
           <stop offset="100%" stopColor="#fff7ed" />
         </linearGradient>
       </defs>
@@ -426,11 +580,11 @@ function NetworkCanvas({
           <text
             key={layer.id}
             x={first.x}
-            y={72}
+            y={78}
             textAnchor="middle"
             className="fill-[#526070] text-[12px] font-semibold uppercase"
           >
-            {layer.kind}
+            {layer.kind} · {layer.neurons.length}
           </text>
         ) : null;
       })}
@@ -458,11 +612,11 @@ function NetworkCanvas({
               const active = selected?.id === id || hovered?.id === id;
               const weightMagnitude = Math.min(1, Math.abs(weight) / 2.4);
               const stroke = weight >= 0 ? "#2563eb" : "#e11d48";
-              const widthByWeight = 1.35 + weightMagnitude * 6.4;
+              const widthByWeight = 0.85 + weightMagnitude * 5.6;
               const contributionWidth =
-                1.2 + Math.min(6, Math.abs(traceEdge?.contribution ?? 0) * 5.5);
+                1 + Math.min(6, Math.abs(traceEdge?.contribution ?? 0) * 5.5);
               const errorWidth =
-                1.4 + Math.min(9, Math.abs(traceEdge?.gradient ?? 0) * 22);
+                1.1 + Math.min(9, Math.abs(traceEdge?.gradient ?? 0) * 22);
 
               return (
                 <g key={id}>
@@ -473,7 +627,7 @@ function NetworkCanvas({
                     y2={toPos.y}
                     stroke={stroke}
                     strokeWidth={widthByWeight}
-                    strokeOpacity={active ? 0.75 : 0.22 + weightMagnitude * 0.45}
+                    strokeOpacity={active ? 0.75 : 0.16 + weightMagnitude * 0.38}
                     strokeLinecap="round"
                   />
                   {phase === "forward" && (
@@ -485,7 +639,7 @@ function NetworkCanvas({
                       y2={toPos.y}
                       stroke="#0891b2"
                       strokeWidth={contributionWidth}
-                      strokeOpacity={0.68}
+                      strokeOpacity={0.72}
                       strokeLinecap="round"
                       strokeDasharray="9 17"
                     />
@@ -499,7 +653,7 @@ function NetworkCanvas({
                       y2={fromPos.y}
                       stroke="#f97316"
                       strokeWidth={errorWidth}
-                      strokeOpacity={0.7}
+                      strokeOpacity={0.72}
                       strokeLinecap="round"
                       strokeDasharray="11 15"
                     />
@@ -510,7 +664,7 @@ function NetworkCanvas({
                     x2={toPos.x}
                     y2={toPos.y}
                     stroke="transparent"
-                    strokeWidth={16}
+                    strokeWidth={14}
                     className="cursor-pointer"
                     aria-label={`w = ${formatNumber(weight)}`}
                     onMouseEnter={() => onHover(selection)}
@@ -550,6 +704,7 @@ function NetworkCanvas({
                 : neuron.layerKind === "output"
                   ? "#dc2626"
                   : "#d97706";
+            const tiny = pos.radius < 12;
 
             return (
               <g
@@ -568,36 +723,30 @@ function NetworkCanvas({
                   r={pos.radius}
                   fill={fill}
                   stroke={active ? "#111827" : stroke}
-                  strokeWidth={active ? 3 : 2}
+                  strokeWidth={active ? 3 : 1.7}
                   className={phase === "forward" && neuron.layerKind !== "input" ? "neuron-pop" : ""}
                 />
-                <text
-                  x={pos.x}
-                  y={pos.y + 4}
-                  textAnchor="middle"
-                  className="pointer-events-none fill-[#18202f] text-[10px] font-bold"
-                >
-                  {formatNumber(snapshot.value, 2)}
-                </text>
-                <text
-                  x={pos.x}
-                  y={pos.y + pos.radius + 16}
-                  textAnchor="middle"
-                  className="pointer-events-none fill-[#526070] text-[10px] font-medium"
-                >
-                  {neuron.layerKind === "input"
-                    ? `x=${formatNumber(snapshot.value, 2)}`
-                    : `Σ=${formatNumber(snapshot.z, 2)}`}
-                </text>
-                {neuron.layerKind !== "input" && (
-                  <text
-                    x={pos.x}
-                    y={pos.y + pos.radius + 29}
-                    textAnchor="middle"
-                    className="pointer-events-none fill-[#64748b] text-[9px]"
-                  >
-                    a={formatNumber(snapshot.value, 2)}
-                  </text>
+                {!tiny && (
+                  <>
+                    <text
+                      x={pos.x}
+                      y={pos.y + 4}
+                      textAnchor="middle"
+                      className="pointer-events-none fill-[#18202f] text-[10px] font-bold"
+                    >
+                      {formatNumber(snapshot.value, 2)}
+                    </text>
+                    <text
+                      x={pos.x}
+                      y={pos.y + pos.radius + 14}
+                      textAnchor="middle"
+                      className="pointer-events-none fill-[#526070] text-[9px] font-medium"
+                    >
+                      {neuron.layerKind === "input"
+                        ? `x${neuron.neuronIndex + 1}`
+                        : `Σ=${formatNumber(snapshot.z, 2)}`}
+                    </text>
+                  </>
                 )}
               </g>
             );
@@ -609,6 +758,7 @@ function NetworkCanvas({
 }
 
 interface InspectorPanelProps {
+  task: Task;
   selection: Selection | null;
   trace: TrainingTrace;
   network: NeuralNetwork;
@@ -616,7 +766,7 @@ interface InspectorPanelProps {
   onDataChange: (data: DataPoint[]) => void;
 }
 
-function InspectorPanel({ selection, trace, network, data, onDataChange }: InspectorPanelProps) {
+function InspectorPanel({ task, selection, trace, network, data, onDataChange }: InspectorPanelProps) {
   const neuron =
     selection?.type === "neuron"
       ? trace.neurons.find((item) => item.id === selection.id) ?? null
@@ -635,73 +785,100 @@ function InspectorPanel({ selection, trace, network, data, onDataChange }: Inspe
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {neuron && <NeuronInspector neuron={neuron} />}
         {edge && <EdgeInspector edge={edge} />}
-        {!neuron && !edge && <TraceSummary trace={trace} />}
+        {!neuron && !edge && <TraceSummary task={task} trace={trace} />}
       </div>
 
-      <DatasetPanel network={network} data={data} onDataChange={onDataChange} />
+      <DatasetPanel task={task} network={network} data={data} onDataChange={onDataChange} />
     </aside>
   );
 }
 
-function TraceSummary({ trace }: { trace: TrainingTrace }) {
+function TraceSummary({ task, trace }: { task: Task; trace: TrainingTrace }) {
+  const prediction = predictionName(task, trace.prediction);
+  const target = targetName(task, trace.target);
+  const inputPreview = trace.input
+    .slice(0, 6)
+    .map((value) => formatNumber(value, 2))
+    .join(", ");
+
   return (
     <div className="space-y-3">
       <div className="rounded-md border border-[#dbe3ee] p-3">
         <div className="text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
-          Son Örnek
+          Son örnek
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2">
-          <Stat label="x" value={formatNumber(trace.input[0] ?? 0)} />
-          <Stat label="hedef" value={formatNumber(trace.target[0] ?? 0)} />
-          <Stat label="tahmin" value={formatNumber(trace.prediction[0] ?? 0)} />
+          <Stat label="girdi" value={trace.input.length > 6 ? `${inputPreview}...` : inputPreview} />
+          <Stat label="hedef" value={target} />
+          <Stat label="tahmin" value={prediction} />
           <Stat label="loss" value={formatNumber(trace.loss, 5)} />
         </div>
       </div>
       <FormulaBox
-        title="Loss"
-        lines={[
-          "L = 1/2 * (ŷ - y)^2",
-          `L = 1/2 * (${formatNumber(trace.prediction[0] ?? 0)} - ${formatNumber(
-            trace.target[0] ?? 0
-          )})^2`
-        ]}
+        title="Loss hesabı"
+        lines={
+          task.outputType === "regression"
+            ? [
+                "L = 1/2 × (ŷ - y)^2",
+                `L = 1/2 × (${formatNumber(trace.prediction[0] ?? 0)} - ${formatNumber(
+                  trace.target[0] ?? 0
+                )})^2`
+              ]
+            : [
+                "L = 1/2 × Σ(çıktı - hedef)^2",
+                `çıktı = [${trace.prediction.map((value) => formatNumber(value, 3)).join(", ")}]`,
+                `hedef = [${trace.target.map((value) => formatNumber(value, 0)).join(", ")}]`
+              ]
+        }
+      />
+      <ExplainBox
+        title="Ne anlama geliyor?"
+        text="Loss küçülüyorsa ağ, veri setindeki örnekleri daha az hatayla açıklamaya başlıyor. Tek bir epoch, veri setindeki tüm örneklerden bir kez geçmek demektir."
       />
     </div>
   );
 }
 
 function NeuronInspector({ neuron }: { neuron: NeuronSnapshot }) {
+  const topIncoming = [...neuron.incoming]
+    .sort((a, b) => Math.abs(b.product) - Math.abs(a.product))
+    .slice(0, 6);
+
   return (
     <div className="space-y-3">
       <div>
         <div className="text-sm font-semibold">
           {neuron.layerKind} · L{neuron.layerIndex} N{neuron.neuronIndex}
         </div>
-        <div className="text-xs text-[#64748b]">{neuron.activation}</div>
+        <div className="text-xs text-[#64748b]">{activationLabel(neuron.activation)}</div>
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <Stat label="Σ(x*w)+b" value={formatNumber(neuron.z)} />
+        <Stat label="Σ(x×w)+b" value={formatNumber(neuron.z)} />
         <Stat label="aktivasyon" value={formatNumber(neuron.value)} />
         <Stat label="bias" value={formatNumber(neuron.bias)} />
         <Stat label="δ hata" value={formatNumber(neuron.delta)} />
         <Stat label="türev" value={formatNumber(neuron.derivative)} />
         <Stat label="∂L/∂b" value={formatNumber(neuron.gradientBias)} />
       </div>
-      <FormulaBox title="Hesap" lines={[neuron.formula, `a = ${neuron.activation}(Σ)`]} />
-      {neuron.incoming.length > 0 && (
+      <FormulaBox title="Nöron hesabı" lines={[neuron.formula, `a = ${neuron.activation}(Σ)`]} />
+      <ExplainBox
+        title="Bu nöron ne yapıyor?"
+        text="Gelen sinyalleri ağırlıklarıyla çarpar, bias ekler ve aktivasyon fonksiyonu ile sonucu sıkıştırır ya da geçirir. δ değeri, bu nöronun son hataya ne kadar pay verdiğini gösterir."
+      />
+      {topIncoming.length > 0 && (
         <div className="rounded-md border border-[#dbe3ee]">
           <div className="border-b border-[#e2e8f0] px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
-            Gelenler
+            En güçlü gelen katkılar
           </div>
           <div className="divide-y divide-[#edf2f7]">
-            {neuron.incoming.map((item) => (
+            {topIncoming.map((item) => (
               <div
                 key={`${item.fromNeuronId}-${neuron.id}`}
                 className="grid grid-cols-[1fr_auto] gap-2 px-3 py-2 text-xs"
               >
                 <span className="font-medium">{item.fromNeuronId}</span>
                 <span className="text-[#64748b]">
-                  {formatNumber(item.inputValue, 3)} * {formatNumber(item.weight, 3)} ={" "}
+                  {formatNumber(item.inputValue, 3)} × {formatNumber(item.weight, 3)} ={" "}
                   {formatNumber(item.product, 3)}
                 </span>
               </div>
@@ -732,64 +909,189 @@ function EdgeInspector({ edge }: { edge: EdgeSnapshot }) {
         <Stat label="hata etkisi" value={formatNumber(edge.errorSignal)} />
       </div>
       <FormulaBox
-        title="Bağlantı"
+        title="Bağlantı güncellemesi"
         lines={[
-          "katkı = a_önceki * w",
-          "∂L/∂w = a_önceki * δ_sonraki",
-          `w' = ${formatNumber(edge.weightBefore)} + ${formatNumber(edge.correction)}`
+          "katkı = a_önceki × w",
+          "∂L/∂w = a_önceki × δ_sonraki",
+          `w_yeni = ${formatNumber(edge.weightBefore)} + ${formatNumber(edge.correction)}`
         ]}
+      />
+      <ExplainBox
+        title="Neden değişti?"
+        text="Gradient pozitifse ağırlığı azaltmak loss'u düşürmeye çalışır; gradient negatifse ağırlık artırılır. Learning rate bu adımın büyüklüğünü belirler."
       />
     </div>
   );
 }
 
 interface DatasetPanelProps {
+  task: Task;
   network: NeuralNetwork;
   data: DataPoint[];
   onDataChange: (data: DataPoint[]) => void;
 }
 
-function DatasetPanel({ network, data, onDataChange }: DatasetPanelProps) {
-  const [draft, setDraft] = useState({ x: 0.42, y: 0.58 });
+function DatasetPanel({ task, network, data, onDataChange }: DatasetPanelProps) {
+  return (
+    <div className="border-t border-[#e2e8f0] px-4 py-4">
+      <PanelTitle
+        icon={task.id === "digit" ? <ImageIcon className="h-5 w-5" /> : <Database className="h-5 w-5" />}
+        title={task.id === "digit" ? "Resim Verisi" : "Veri"}
+        compact
+      />
+      {task.id === "digit" ? (
+        <DigitDatasetPanel task={task} network={network} data={data} onDataChange={onDataChange} />
+      ) : (
+        <NumericDatasetPanel task={task} network={network} data={data} onDataChange={onDataChange} />
+      )}
+    </div>
+  );
+}
+
+function NumericDatasetPanel({ task, network, data, onDataChange }: DatasetPanelProps) {
+  const [draft, setDraft] = useState({ x: 0.42, y: 0.58, target: 0.72, cls: 1 });
 
   const addPoint = () => {
-    const point: DataPoint = {
-      id: `p${Date.now()}`,
-      x: sanitizePointValue(draft.x),
-      y: sanitizePointValue(draft.y)
-    };
-    onDataChange([...data, point]);
+    const inputs =
+      task.inputSize === 1
+        ? [sanitizePointValue(draft.x)]
+        : [sanitizePointValue(draft.x), sanitizePointValue(draft.y)];
+    const targets =
+      task.outputSize === 1
+        ? [sanitizePointValue(draft.target)]
+        : Array.from({ length: task.outputSize }, (_, index) => (index === draft.cls ? 1 : 0));
+    onDataChange([
+      ...data,
+      {
+        id: `p${Date.now()}`,
+        inputs,
+        targets,
+        label: task.outputSize === 1 ? formatNumber(targets[0], 2) : task.classNames?.[draft.cls]
+      }
+    ]);
   };
 
   return (
-    <div className="border-t border-[#e2e8f0] px-4 py-4">
-      <PanelTitle icon={<Database className="h-5 w-5" />} title="Veri" compact />
-      <DataPlot network={network} data={data} />
+    <>
+      <DataPlot task={task} network={network} data={data} />
       <div className="mt-3 grid grid-cols-[1fr_1fr_auto] gap-2">
         <NumberInput
-          label="x"
+          label={task.inputSize === 1 ? "x" : "x"}
           value={draft.x}
           onChange={(value) => setDraft((previous) => ({ ...previous, x: value }))}
         />
-        <NumberInput
-          label="y"
-          value={draft.y}
-          onChange={(value) => setDraft((previous) => ({ ...previous, y: value }))}
-        />
+        {task.inputSize === 1 ? (
+          <NumberInput
+            label="hedef y"
+            value={draft.target}
+            onChange={(value) => setDraft((previous) => ({ ...previous, target: value }))}
+          />
+        ) : (
+          <NumberInput
+            label="y"
+            value={draft.y}
+            onChange={(value) => setDraft((previous) => ({ ...previous, y: value }))}
+          />
+        )}
         <IconButton title="Nokta ekle" onClick={addPoint} className="mt-5">
           <Plus className="h-4 w-4" />
         </IconButton>
       </div>
-      <div className="mt-3 flex max-h-16 flex-wrap gap-1 overflow-y-auto">
-        {data.map((point) => (
+      {task.outputSize > 1 && (
+        <label className="mt-2 block">
+          <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#64748b]">
+            Sınıf
+          </span>
+          <select
+            className="mt-1 h-9 w-full rounded-md border border-[#cbd5e1] bg-white px-2 text-sm"
+            value={draft.cls}
+            onChange={(event) => setDraft((previous) => ({ ...previous, cls: Number(event.target.value) }))}
+          >
+            {Array.from({ length: task.outputSize }, (_, index) => (
+              <option key={index} value={index}>
+                {task.classNames?.[index] ?? `Sınıf ${index}`}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <PointChips task={task} data={data} onDataChange={onDataChange} />
+    </>
+  );
+}
+
+function DigitDatasetPanel({ task, network, data, onDataChange }: DatasetPanelProps) {
+  const [pixels, setPixels] = useState<number[]>(() => data[0]?.inputs ?? Array(25).fill(0));
+  const [label, setLabel] = useState(0);
+  const prediction = network.predictPure(pixels);
+
+  const togglePixel = (index: number) => {
+    setPixels((previous) =>
+      previous.map((value, itemIndex) => (itemIndex === index ? (value > 0 ? 0 : 1) : value))
+    );
+  };
+
+  const addImage = () => {
+    onDataChange([
+      ...data,
+      {
+        id: `img${Date.now()}`,
+        inputs: [...pixels],
+        targets: Array.from({ length: task.outputSize }, (_, index) => (index === label ? 1 : 0)),
+        label: task.classNames?.[label] ?? String(label)
+      }
+    ]);
+  };
+
+  return (
+    <div className="mt-3 grid grid-cols-[122px_1fr] gap-3">
+      <div>
+        <div className="grid h-[122px] w-[122px] grid-cols-5 grid-rows-5 gap-1 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-2">
+          {pixels.map((value, index) => (
+            <button
+              key={index}
+              type="button"
+              aria-label={`Piksel ${index + 1}`}
+              className="rounded-[3px] border border-[#cbd5e1]"
+              style={{ backgroundColor: `rgba(24, 32, 47, ${0.08 + value * 0.86})` }}
+              onClick={() => togglePixel(index)}
+            />
+          ))}
+        </div>
+        <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
+          <select
+            className="h-9 rounded-md border border-[#cbd5e1] bg-white px-2 text-sm"
+            value={label}
+            onChange={(event) => setLabel(Number(event.target.value))}
+          >
+            {task.classNames?.map((name, index) => (
+              <option key={name} value={index}>
+                {name}
+              </option>
+            ))}
+          </select>
+          <IconButton title="Resmi veriye ekle" onClick={addImage}>
+            <Plus className="h-4 w-4" />
+          </IconButton>
+        </div>
+      </div>
+      <div className="min-w-0">
+        <OutputBars task={task} values={prediction} />
+        <div className="mt-2 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-2 text-xs leading-5 text-[#526070]">
+          Her kare bir giriş nöronu. Koyu kare 1, açık kare 0. Epoch attıkça çıktı çubukları doğru rakama yaklaşmalı.
+        </div>
+      </div>
+      <div className="col-span-2 mt-1 grid grid-cols-4 gap-2">
+        {data.slice(0, 8).map((point) => (
           <button
             key={point.id}
             type="button"
-            className="rounded-md border border-[#dbe3ee] px-2 py-1 text-[11px] text-[#526070] hover:border-[#ef4444] hover:text-[#b91c1c]"
-            onClick={() => onDataChange(data.filter((item) => item.id !== point.id))}
-            title="Noktayı sil"
+            className="rounded-md border border-[#dbe3ee] p-1 hover:border-[#2563eb]"
+            title={`${point.label} örneğini yükle`}
+            onClick={() => setPixels(point.inputs)}
           >
-            {formatNumber(point.x, 2)}, {formatNumber(point.y, 2)}
+            <MiniDigit inputs={point.inputs} />
+            <div className="mt-1 text-[11px] font-semibold text-[#526070]">{point.label}</div>
           </button>
         ))}
       </div>
@@ -797,16 +1099,23 @@ function DatasetPanel({ network, data, onDataChange }: DatasetPanelProps) {
   );
 }
 
-function DataPlot({ network, data }: { network: NeuralNetwork; data: DataPoint[] }) {
-  const width = 328;
-  const height = 178;
+function DataPlot({ task, network, data }: { task: Task; network: NeuralNetwork; data: DataPoint[] }) {
+  if (task.inputSize === 1) {
+    return <RegressionPlot network={network} data={data} />;
+  }
+  return <BoundaryPlot task={task} network={network} data={data} />;
+}
+
+function RegressionPlot({ network, data }: { network: NeuralNetwork; data: DataPoint[] }) {
+  const width = 342;
+  const height = 180;
   const xScale = scaleLinear().domain([0, 1]).range([30, width - 14]);
   const yScale = scaleLinear().domain([-0.08, 1.08]).range([height - 24, 12]);
   const curve = useMemo(
     () =>
-      Array.from({ length: 72 }, (_, index) => {
-        const x = index / 71;
-        return { x, y: network.predict(x) };
+      Array.from({ length: 80 }, (_, index) => {
+        const x = index / 79;
+        return { x, y: network.predictPure([x])[0] ?? 0 };
       }),
     [network]
   );
@@ -816,7 +1125,7 @@ function DataPlot({ network, data }: { network: NeuralNetwork; data: DataPoint[]
       .y((point) => yScale(point.y))(curve) ?? "";
 
   return (
-    <svg className="mt-3 h-[178px] w-full rounded-md border border-[#dbe3ee]" viewBox={`0 0 ${width} ${height}`}>
+    <svg className="mt-3 h-[180px] w-full rounded-md border border-[#dbe3ee]" viewBox={`0 0 ${width} ${height}`}>
       <rect width={width} height={height} fill="#fbfdff" />
       <line x1={30} y1={height - 24} x2={width - 14} y2={height - 24} stroke="#cbd5e1" />
       <line x1={30} y1={12} x2={30} y2={height - 24} stroke="#cbd5e1" />
@@ -824,8 +1133,8 @@ function DataPlot({ network, data }: { network: NeuralNetwork; data: DataPoint[]
       {data.map((point) => (
         <circle
           key={point.id}
-          cx={xScale(point.x)}
-          cy={yScale(point.y)}
+          cx={xScale(point.inputs[0] ?? 0)}
+          cy={yScale(point.targets[0] ?? 0)}
           r={4.2}
           fill="#f97316"
           stroke="#ffffff"
@@ -842,13 +1151,113 @@ function DataPlot({ network, data }: { network: NeuralNetwork; data: DataPoint[]
   );
 }
 
+function BoundaryPlot({ task, network, data }: { task: Task; network: NeuralNetwork; data: DataPoint[] }) {
+  const width = 342;
+  const height = 192;
+  const xScale = scaleLinear().domain([0, 1]).range([28, width - 12]);
+  const yScale = scaleLinear().domain([0, 1]).range([height - 24, 12]);
+  const cells = 22;
+  const colors = task.classColors ?? ["#3b82f6", "#ef4444", "#10b981", "#f59e0b"];
+
+  return (
+    <svg className="mt-3 h-[192px] w-full rounded-md border border-[#dbe3ee]" viewBox={`0 0 ${width} ${height}`}>
+      <rect width={width} height={height} fill="#fbfdff" />
+      {Array.from({ length: cells * cells }, (_, index) => {
+        const gx = index % cells;
+        const gy = Math.floor(index / cells);
+        const x = gx / (cells - 1);
+        const y = gy / (cells - 1);
+        const out = network.predictPure([x, y]);
+        const cls = out.indexOf(Math.max(...out));
+        const confidence = Math.max(...out);
+        const cellW = (width - 40) / cells;
+        const cellH = (height - 36) / cells;
+        return (
+          <rect
+            key={index}
+            x={28 + gx * cellW}
+            y={12 + gy * cellH}
+            width={cellW + 0.4}
+            height={cellH + 0.4}
+            fill={colors[cls] ?? "#94a3b8"}
+            opacity={0.13 + Math.min(0.24, Math.abs(confidence) * 0.12)}
+          />
+        );
+      })}
+      <line x1={28} y1={height - 24} x2={width - 12} y2={height - 24} stroke="#cbd5e1" />
+      <line x1={28} y1={12} x2={28} y2={height - 24} stroke="#cbd5e1" />
+      {data.map((point) => {
+        const cls = point.targets.indexOf(Math.max(...point.targets));
+        return (
+          <circle
+            key={point.id}
+            cx={xScale(point.inputs[0] ?? 0)}
+            cy={yScale(point.inputs[1] ?? 0)}
+            r={4.3}
+            fill={colors[cls] ?? "#f97316"}
+            stroke="#ffffff"
+            strokeWidth={1.5}
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+function PointChips({
+  task,
+  data,
+  onDataChange
+}: {
+  task: Task;
+  data: DataPoint[];
+  onDataChange: (data: DataPoint[]) => void;
+}) {
+  return (
+    <div className="mt-3 flex max-h-16 flex-wrap gap-1 overflow-y-auto">
+      {data.map((point) => (
+        <button
+          key={point.id}
+          type="button"
+          className="rounded-md border border-[#dbe3ee] px-2 py-1 text-[11px] text-[#526070] hover:border-[#ef4444] hover:text-[#b91c1c]"
+          onClick={() => onDataChange(data.filter((item) => item.id !== point.id))}
+          title="Noktayı sil"
+        >
+          {task.inputSize === 1
+            ? `${formatNumber(point.inputs[0] ?? 0, 2)} → ${formatNumber(point.targets[0] ?? 0, 2)}`
+            : `${formatNumber(point.inputs[0] ?? 0, 2)}, ${formatNumber(point.inputs[1] ?? 0, 2)} · ${
+                point.label ?? targetName(task, point.targets)
+              }`}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function MiniDigit({ inputs }: { inputs: number[] }) {
+  return (
+    <div className="grid grid-cols-5 gap-[2px]">
+      {inputs.map((value, index) => (
+        <span
+          key={index}
+          className="block aspect-square rounded-[2px]"
+          style={{ backgroundColor: `rgba(24, 32, 47, ${0.08 + value * 0.84})` }}
+        />
+      ))}
+    </div>
+  );
+}
+
 interface TrainingPanelProps {
+  task: Task;
   epoch: number;
+  history: EpochEntry[];
   lossHistory: number[];
   learningRate: number;
   running: boolean;
   phase: TrainingPhase;
   trace: TrainingTrace;
+  accuracy: number | null;
   onLearningRateChange: (value: number) => void;
   onStep: () => void;
   onToggleRun: () => void;
@@ -856,19 +1265,22 @@ interface TrainingPanelProps {
 }
 
 function TrainingPanel({
+  task,
   epoch,
+  history,
   lossHistory,
   learningRate,
   running,
   phase,
   trace,
+  accuracy,
   onLearningRateChange,
   onStep,
   onToggleRun,
   onReset
 }: TrainingPanelProps) {
   return (
-    <section className="col-span-3 grid grid-cols-[360px_1fr_320px] gap-px bg-[#d7dde8]">
+    <section className="col-span-3 grid grid-cols-[350px_minmax(0,1fr)_430px] gap-px bg-[#d7dde8]">
       <div className="bg-white px-4 py-4">
         <PanelTitle icon={<Zap className="h-5 w-5" />} title="Eğitim" compact />
         <div className="mt-4 flex items-center gap-2">
@@ -896,11 +1308,17 @@ function TrainingPanel({
             onChange={(event) => onLearningRateChange(Number(event.target.value))}
           />
         </div>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <Stat label="epoch" value={String(epoch)} />
+          <Stat label="faz" value={phase} />
+          <Stat label="loss" value={formatNumber(lossHistory.at(-1) ?? 0, 6)} />
+          <Stat label={accuracy === null ? "çıktı" : "doğruluk"} value={accuracy === null ? predictionName(task, trace.predictionAfter) : `${formatNumber(accuracy * 100, 1)}%`} />
+        </div>
       </div>
 
       <div className="bg-white px-4 py-4">
         <div className="mb-3 flex items-center justify-between">
-          <PanelTitle icon={<BarChart3 className="h-5 w-5" />} title="Loss" compact />
+          <PanelTitle icon={<BarChart3 className="h-5 w-5" />} title="Loss Grafiği" compact />
           <div className="text-xs font-semibold text-[#64748b]">
             {formatNumber(lossHistory.at(-1) ?? 0, 6)}
           </div>
@@ -908,27 +1326,129 @@ function TrainingPanel({
         <LossChart values={lossHistory} />
       </div>
 
-      <div className="bg-white px-4 py-4">
-        <PanelTitle icon={<Waves className="h-5 w-5" />} title="Zaman Çizelgesi" compact />
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          <Stat label="epoch" value={String(epoch)} />
-          <Stat label="faz" value={phase} />
-          <Stat label="ŷ önce" value={formatNumber(trace.prediction[0] ?? 0)} />
-          <Stat label="ŷ sonra" value={formatNumber(trace.predictionAfter[0] ?? 0)} />
-        </div>
+      <div className="overflow-y-auto bg-white px-4 py-4">
+        <PanelTitle icon={<Waves className="h-5 w-5" />} title="Epoch Açıklaması" compact />
+        <EpochExplainer task={task} trace={trace} history={history} learningRate={learningRate} />
       </div>
     </section>
   );
 }
 
+function EpochExplainer({
+  task,
+  trace,
+  history,
+  learningRate
+}: {
+  task: Task;
+  trace: TrainingTrace;
+  history: EpochEntry[];
+  learningRate: number;
+}) {
+  const strongestEdge = [...trace.edges].sort((a, b) => Math.abs(b.gradient) - Math.abs(a.gradient))[0];
+  const newest = history[0];
+
+  return (
+    <div className="mt-3 space-y-3">
+      <div className="grid grid-cols-3 gap-2">
+        <StepCard title="1. İleri" text={`Tahmin: ${predictionName(task, trace.prediction)}`} />
+        <StepCard title="2. Hata" text={`Hedef: ${targetName(task, trace.target)} · L=${formatNumber(trace.loss, 5)}`} />
+        <StepCard
+          title="3. Güncelle"
+          text={
+            strongestEdge
+              ? `En büyük |∂L/∂w|: ${formatNumber(strongestEdge.gradient, 4)}`
+              : `η=${formatNumber(learningRate, 3)}`
+          }
+        />
+      </div>
+      <FormulaBox
+        title="Bir epoch içinde olanlar"
+        lines={[
+          "Her örnek için: ŷ = forward(x)",
+          "Loss: L = 1/2 × Σ(ŷ - y)^2",
+          "Geri yayılım: δ = hata × aktivasyon türevi",
+          "Ağırlık: w = w - η × ∂L/∂w"
+        ]}
+      />
+      {newest && (
+        <div className="rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3">
+          <div className="text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+            Son epoch sonucu
+          </div>
+          <div className="mt-2 text-sm leading-6 text-[#334155]">
+            Epoch {newest.epoch} sırasında veri seti bir kez gezildi. Son görülen örnek{" "}
+            <span className="font-semibold">{newest.sampleName}</span>. Loss{" "}
+            <span className="font-semibold">{formatNumber(newest.lossBefore, 5)}</span> değerinden{" "}
+            <span className="font-semibold">{formatNumber(newest.lossAfter, 5)}</span> değerine geldi.
+          </div>
+        </div>
+      )}
+      <div className="max-h-24 space-y-1 overflow-y-auto">
+        {history.map((item) => (
+          <div
+            key={item.epoch}
+            className="grid grid-cols-[64px_1fr_auto] gap-2 rounded-md border border-[#edf2f7] px-2 py-1 text-xs"
+          >
+            <span className="font-semibold">E{item.epoch}</span>
+            <span className="truncate">
+              {item.sampleName}: {predictionName(task, item.prediction)} →{" "}
+              {predictionName(task, item.predictionAfter)}
+            </span>
+            <span className={item.lossAfter <= item.lossBefore ? "text-[#047857]" : "text-[#b91c1c]"}>
+              {formatNumber(item.lossAfter - item.lossBefore, 5)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StepCard({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="min-w-0 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-2">
+      <div className="text-[11px] font-semibold text-[#18202f]">{title}</div>
+      <div className="mt-1 truncate text-[11px] text-[#64748b]" title={text}>
+        {text}
+      </div>
+    </div>
+  );
+}
+
+function OutputBars({ task, values }: { task: Task; values: number[] }) {
+  const max = Math.max(0.001, ...values.map((value) => Math.abs(value)));
+  return (
+    <div className="space-y-2">
+      {values.map((value, index) => (
+        <div key={index}>
+          <div className="mb-1 flex items-center justify-between text-[11px] text-[#526070]">
+            <span>{task.classNames?.[index] ?? `Çıktı ${index + 1}`}</span>
+            <span>{formatNumber(value, 3)}</span>
+          </div>
+          <div className="h-2 rounded-full bg-[#e2e8f0]">
+            <div
+              className="h-2 rounded-full"
+              style={{
+                width: `${Math.min(100, (Math.abs(value) / max) * 100)}%`,
+                backgroundColor: task.classColors?.[index] ?? "#2563eb"
+              }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function LossChart({ values }: { values: number[] }) {
-  const width = 620;
-  const height = 100;
+  const width = 650;
+  const height = 126;
   const maxLoss = Math.max(0.001, ...values);
   const xScale = scaleLinear()
     .domain([0, Math.max(1, values.length - 1)])
     .range([8, width - 10]);
-  const yScale = scaleLinear().domain([0, maxLoss]).range([height - 16, 8]);
+  const yScale = scaleLinear().domain([0, maxLoss]).range([height - 18, 10]);
   const chartValues = values.length > 1 ? values : [values[0] ?? 0, values[0] ?? 0];
   const path =
     line<number>()
@@ -936,16 +1456,16 @@ function LossChart({ values }: { values: number[] }) {
       .y((value) => yScale(value))(chartValues) ?? "";
 
   return (
-    <svg className="h-[108px] w-full" viewBox={`0 0 ${width} ${height}`}>
+    <svg className="h-[138px] w-full" viewBox={`0 0 ${width} ${height}`}>
       <rect width={width} height={height} rx={6} fill="#fbfdff" stroke="#dbe3ee" />
-      <line x1={8} y1={height - 16} x2={width - 10} y2={height - 16} stroke="#dbe3ee" />
+      <line x1={8} y1={height - 18} x2={width - 10} y2={height - 18} stroke="#dbe3ee" />
       <path d={path} fill="none" stroke="#2563eb" strokeWidth={3} strokeLinecap="round" />
       {chartValues.map((value, index) => (
         <circle
           key={`${index}-${value}`}
           cx={xScale(index)}
           cy={yScale(value)}
-          r={index === chartValues.length - 1 ? 3.5 : 1.8}
+          r={index === chartValues.length - 1 ? 3.6 : 1.8}
           fill={index === chartValues.length - 1 ? "#f97316" : "#60a5fa"}
         />
       ))}
@@ -1000,6 +1520,15 @@ function FormulaBox({ title, lines }: { title: string; lines: string[] }) {
   );
 }
 
+function ExplainBox({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="rounded-md border border-[#dbe3ee] bg-white p-3">
+      <div className="text-xs font-semibold text-[#18202f]">{title}</div>
+      <div className="mt-1 text-xs leading-5 text-[#526070]">{text}</div>
+    </div>
+  );
+}
+
 function NumberInput({
   label,
   value,
@@ -1047,7 +1576,7 @@ function IconButton({
       aria-label={title}
       disabled={disabled}
       onClick={onClick}
-      className={`inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#cbd5e1] bg-white text-[#334155] transition hover:border-[#2563eb] hover:text-[#2563eb] disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
+      className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[#cbd5e1] bg-white text-[#334155] transition hover:border-[#2563eb] hover:text-[#2563eb] disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
     >
       {children}
     </button>
