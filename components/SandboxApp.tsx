@@ -9,7 +9,6 @@ import {
   Database,
   Eye,
   ImageIcon,
-  Layers,
   Minus,
   Pause,
   Play,
@@ -38,17 +37,9 @@ import {
   sanitizePointValue
 } from "@/lib/ml/network";
 import { TASKS, Task, TaskId } from "@/lib/ml/tasks";
-
-interface EpochEntry {
-  epoch: number;
-  lossBefore: number;
-  lossAfter: number;
-  sampleName: string;
-  prediction: number[];
-  predictionAfter: number[];
-  target: number[];
-  learningRate: number;
-}
+import { DatasetImport } from "@/components/lab/DatasetImport";
+import { StepExplorer } from "@/components/lab/StepExplorer";
+import { buildEpochTraceRecord, type EpochTraceRecord } from "@/lib/ml/trace";
 
 interface ModelState {
   network: NeuralNetwork;
@@ -56,7 +47,7 @@ interface ModelState {
   lossHistory: number[];
   epoch: number;
   seed: number;
-  history: EpochEntry[];
+  history: EpochTraceRecord[];
 }
 
 function firstTrace(network: NeuralNetwork, data: DataPoint[]) {
@@ -112,6 +103,7 @@ export function SandboxApp() {
   const [learningRate, setLearningRate] = useState(task.defaultLearningRate);
   const [running, setRunning] = useState(false);
   const [phase, setPhase] = useState<TrainingPhase>("idle");
+  const [focusMode, setFocusMode] = useState(false);
   const [selected, setSelected] = useState<Selection | null>(null);
   const [hovered, setHovered] = useState<Selection | null>(null);
   const timers = useRef<number[]>([]);
@@ -188,34 +180,26 @@ export function SandboxApp() {
     []
   );
 
+  const resetTaskData = useCallback(() => {
+    updateData(cloneData(task.data));
+  }, [task.data, updateData]);
+
   const runEpoch = useCallback(() => {
     setModel((previous) => {
       const nextNetwork = previous.network.clone();
-      const lossBefore = nextNetwork.evaluateLoss(data);
-      const trace = nextNetwork.trainEpoch(data, learningRate);
-      const lossAfter = nextNetwork.evaluateLoss(data);
-      const point = data.find((item) => item.id === trace.sampleId) ?? data.at(-1);
-      const entry: EpochEntry = {
-        epoch: previous.epoch + 1,
-        lossBefore,
-        lossAfter,
-        sampleName: point?.label ?? point?.id ?? "örnek",
-        prediction: trace.prediction,
-        predictionAfter: trace.predictionAfter,
-        target: trace.target,
-        learningRate
-      };
+      const result = nextNetwork.trainEpochDetailed(data, learningRate);
+      const entry = buildEpochTraceRecord(previous.epoch + 1, result, task, data, learningRate);
       return {
         ...previous,
         network: nextNetwork,
-        trace,
+        trace: result.trace,
         epoch: previous.epoch + 1,
-        lossHistory: [...previous.lossHistory, lossAfter].slice(-160),
-        history: [entry, ...previous.history].slice(0, 8)
+        lossHistory: [...previous.lossHistory, result.lossAfter].slice(-160),
+        history: [entry, ...previous.history].slice(0, 10)
       };
     });
     playPhaseAnimation();
-  }, [data, learningRate, playPhaseAnimation]);
+  }, [data, learningRate, playPhaseAnimation, task]);
 
   useEffect(() => {
     if (!running) return undefined;
@@ -227,8 +211,17 @@ export function SandboxApp() {
   const accuracy = task.outputType === "classification" ? model.network.evaluateAccuracy(data) : null;
 
   return (
-    <main className="h-screen min-h-[760px] min-w-[1180px] overflow-hidden bg-[#f5f7fb] text-[#18202f]">
-      <div className="grid h-full grid-cols-[318px_minmax(0,1fr)_390px] grid-rows-[minmax(0,1fr)_214px] gap-px bg-[#d7dde8]">
+    <main className="h-screen min-h-[820px] min-w-[1280px] overflow-hidden bg-[#f5f7fb] text-[#18202f]">
+      <div className="grid h-full grid-cols-[320px_minmax(0,1fr)_380px] grid-rows-[64px_minmax(0,1fr)_260px] gap-px bg-[#d7dde8]">
+        <AppHeader
+          task={task}
+          epoch={model.epoch}
+          loss={model.lossHistory.at(-1) ?? 0}
+          accuracy={accuracy}
+          focusMode={focusMode}
+          onToggleFocus={() => setFocusMode((value) => !value)}
+        />
+
         <ArchitecturePanel
           task={task}
           taskId={taskId}
@@ -239,21 +232,11 @@ export function SandboxApp() {
         />
 
         <section className="relative overflow-hidden bg-[#eef3f8]">
-          <div className="absolute left-5 top-4 z-10 flex max-w-[520px] items-center gap-3 rounded-md border border-[#c8d3e1] bg-white/94 px-3 py-2 shadow-panel">
-            <BrainCircuit className="h-5 w-5 shrink-0 text-[#2563eb]" />
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold">Görsel Sinir Ağı Sandbox</div>
-              <div className="truncate text-xs text-[#607089]">
-                {task.name} · Epoch {model.epoch} · Loss{" "}
-                {formatNumber(model.lossHistory.at(-1) ?? 0, 5)}
-                {accuracy !== null ? ` · Doğruluk ${formatNumber(accuracy * 100, 1)}%` : ""}
-              </div>
-            </div>
-          </div>
           <NetworkCanvas
             network={model.network}
             trace={model.trace}
             phase={phase}
+            focusMode={focusMode}
             selected={selected}
             hovered={hovered}
             onSelect={setSelected}
@@ -268,6 +251,7 @@ export function SandboxApp() {
           network={model.network}
           data={data}
           onDataChange={updateData}
+          onResetData={resetTaskData}
         />
 
         <TrainingPanel
@@ -280,6 +264,7 @@ export function SandboxApp() {
           phase={phase}
           trace={model.trace}
           accuracy={accuracy}
+          onSelectTarget={setSelected}
           onLearningRateChange={setLearningRate}
           onStep={runEpoch}
           onToggleRun={() => {
@@ -290,6 +275,66 @@ export function SandboxApp() {
         />
       </div>
     </main>
+  );
+}
+
+function AppHeader({
+  task,
+  epoch,
+  loss,
+  accuracy,
+  focusMode,
+  onToggleFocus,
+}: {
+  task: Task;
+  epoch: number;
+  loss: number;
+  accuracy: number | null;
+  focusMode: boolean;
+  onToggleFocus: () => void;
+}) {
+  return (
+    <header className="col-span-3 flex items-center justify-between bg-white px-5">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[#e8f0ff] text-[#2563eb]">
+          <BrainCircuit className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <div className="truncate text-base font-semibold">Görsel Sinir Ağı Sandbox</div>
+          <div className="truncate text-xs text-[#607089]">
+            {task.name} · {task.description}
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <HeaderMetric label="Epoch" value={String(epoch)} />
+        <HeaderMetric label="Loss" value={formatNumber(loss, 5)} />
+        {accuracy !== null && <HeaderMetric label="Doğruluk" value={`${formatNumber(accuracy * 100, 1)}%`} />}
+        <button
+          type="button"
+          className={`inline-flex h-10 items-center gap-2 rounded-md border px-3 text-xs font-semibold ${
+            focusMode
+              ? "border-[#2563eb] bg-[#2563eb] text-white"
+              : "border-[#cbd5e1] bg-white text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
+          }`}
+          onClick={onToggleFocus}
+        >
+          <Eye className="h-4 w-4" />
+          Yakın Bakış
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function HeaderMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-24 rounded-md border border-[#dbe3ee] bg-[#fbfdff] px-3 py-1.5">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+        {label}
+      </div>
+      <div className="text-sm font-semibold">{value}</div>
+    </div>
   );
 }
 
@@ -507,6 +552,7 @@ interface NetworkCanvasProps {
   network: NeuralNetwork;
   trace: TrainingTrace;
   phase: TrainingPhase;
+  focusMode: boolean;
   selected: Selection | null;
   hovered: Selection | null;
   onSelect: (selection: Selection | null) => void;
@@ -517,6 +563,7 @@ function NetworkCanvas({
   network,
   trace,
   phase,
+  focusMode,
   selected,
   hovered,
   onSelect,
@@ -556,11 +603,39 @@ function NetworkCanvas({
     () => new Map(trace.edges.map((edge) => [edge.id, edge])),
     [trace.edges]
   );
+  const activeSelection = hovered ?? selected;
+  const focusedViewBox = useMemo(() => {
+    if (!focusMode || !activeSelection) return `0 0 ${width} ${height}`;
+    if (activeSelection.type === "neuron") {
+      const neuron = network.layers[activeSelection.layerIndex]?.neurons[activeSelection.neuronIndex];
+      const pos = neuron ? positions.get(neuron.id) : undefined;
+      if (!pos) return `0 0 ${width} ${height}`;
+      const viewWidth = 360;
+      const viewHeight = 250;
+      return `${Math.max(0, Math.min(width - viewWidth, pos.x - viewWidth / 2))} ${Math.max(
+        0,
+        Math.min(height - viewHeight, pos.y - viewHeight / 2)
+      )} ${viewWidth} ${viewHeight}`;
+    }
+    const from = network.layers[activeSelection.fromLayerIndex]?.neurons[activeSelection.fromNeuronIndex];
+    const to = network.layers[activeSelection.toLayerIndex]?.neurons[activeSelection.toNeuronIndex];
+    const fromPos = from ? positions.get(from.id) : undefined;
+    const toPos = to ? positions.get(to.id) : undefined;
+    if (!fromPos || !toPos) return `0 0 ${width} ${height}`;
+    const midX = (fromPos.x + toPos.x) / 2;
+    const midY = (fromPos.y + toPos.y) / 2;
+    const viewWidth = 430;
+    const viewHeight = 285;
+    return `${Math.max(0, Math.min(width - viewWidth, midX - viewWidth / 2))} ${Math.max(
+      0,
+      Math.min(height - viewHeight, midY - viewHeight / 2)
+    )} ${viewWidth} ${viewHeight}`;
+  }, [activeSelection, focusMode, network.layers, positions]);
 
   return (
     <svg
       className="h-full w-full"
-      viewBox={`0 0 ${width} ${height}`}
+      viewBox={focusedViewBox}
       role="img"
       aria-label="Sinir ağı görselleştirmesi"
       onMouseLeave={() => onHover(null)}
@@ -764,9 +839,18 @@ interface InspectorPanelProps {
   network: NeuralNetwork;
   data: DataPoint[];
   onDataChange: (data: DataPoint[]) => void;
+  onResetData: () => void;
 }
 
-function InspectorPanel({ task, selection, trace, network, data, onDataChange }: InspectorPanelProps) {
+function InspectorPanel({
+  task,
+  selection,
+  trace,
+  network,
+  data,
+  onDataChange,
+  onResetData,
+}: InspectorPanelProps) {
   const neuron =
     selection?.type === "neuron"
       ? trace.neurons.find((item) => item.id === selection.id) ?? null
@@ -788,7 +872,13 @@ function InspectorPanel({ task, selection, trace, network, data, onDataChange }:
         {!neuron && !edge && <TraceSummary task={task} trace={trace} />}
       </div>
 
-      <DatasetPanel task={task} network={network} data={data} onDataChange={onDataChange} />
+      <DatasetPanel
+        task={task}
+        network={network}
+        data={data}
+        onDataChange={onDataChange}
+        onResetData={onResetData}
+      />
     </aside>
   );
 }
@@ -929,9 +1019,10 @@ interface DatasetPanelProps {
   network: NeuralNetwork;
   data: DataPoint[];
   onDataChange: (data: DataPoint[]) => void;
+  onResetData: () => void;
 }
 
-function DatasetPanel({ task, network, data, onDataChange }: DatasetPanelProps) {
+function DatasetPanel({ task, network, data, onDataChange, onResetData }: DatasetPanelProps) {
   return (
     <div className="border-t border-[#e2e8f0] px-4 py-4">
       <PanelTitle
@@ -939,10 +1030,23 @@ function DatasetPanel({ task, network, data, onDataChange }: DatasetPanelProps) 
         title={task.id === "digit" ? "Resim Verisi" : "Veri"}
         compact
       />
+      <DatasetImport task={task} onDataLoaded={onDataChange} onReset={onResetData} />
       {task.id === "digit" ? (
-        <DigitDatasetPanel task={task} network={network} data={data} onDataChange={onDataChange} />
+        <DigitDatasetPanel
+          task={task}
+          network={network}
+          data={data}
+          onDataChange={onDataChange}
+          onResetData={onResetData}
+        />
       ) : (
-        <NumericDatasetPanel task={task} network={network} data={data} onDataChange={onDataChange} />
+        <NumericDatasetPanel
+          task={task}
+          network={network}
+          data={data}
+          onDataChange={onDataChange}
+          onResetData={onResetData}
+        />
       )}
     </div>
   );
@@ -1251,13 +1355,14 @@ function MiniDigit({ inputs }: { inputs: number[] }) {
 interface TrainingPanelProps {
   task: Task;
   epoch: number;
-  history: EpochEntry[];
+  history: EpochTraceRecord[];
   lossHistory: number[];
   learningRate: number;
   running: boolean;
   phase: TrainingPhase;
   trace: TrainingTrace;
   accuracy: number | null;
+  onSelectTarget: (selection: Selection | null) => void;
   onLearningRateChange: (value: number) => void;
   onStep: () => void;
   onToggleRun: () => void;
@@ -1274,6 +1379,7 @@ function TrainingPanel({
   phase,
   trace,
   accuracy,
+  onSelectTarget,
   onLearningRateChange,
   onStep,
   onToggleRun,
@@ -1327,92 +1433,16 @@ function TrainingPanel({
       </div>
 
       <div className="overflow-y-auto bg-white px-4 py-4">
-        <PanelTitle icon={<Waves className="h-5 w-5" />} title="Epoch Açıklaması" compact />
-        <EpochExplainer task={task} trace={trace} history={history} learningRate={learningRate} />
-      </div>
-    </section>
-  );
-}
-
-function EpochExplainer({
-  task,
-  trace,
-  history,
-  learningRate
-}: {
-  task: Task;
-  trace: TrainingTrace;
-  history: EpochEntry[];
-  learningRate: number;
-}) {
-  const strongestEdge = [...trace.edges].sort((a, b) => Math.abs(b.gradient) - Math.abs(a.gradient))[0];
-  const newest = history[0];
-
-  return (
-    <div className="mt-3 space-y-3">
-      <div className="grid grid-cols-3 gap-2">
-        <StepCard title="1. İleri" text={`Tahmin: ${predictionName(task, trace.prediction)}`} />
-        <StepCard title="2. Hata" text={`Hedef: ${targetName(task, trace.target)} · L=${formatNumber(trace.loss, 5)}`} />
-        <StepCard
-          title="3. Güncelle"
-          text={
-            strongestEdge
-              ? `En büyük |∂L/∂w|: ${formatNumber(strongestEdge.gradient, 4)}`
-              : `η=${formatNumber(learningRate, 3)}`
-          }
+        <PanelTitle icon={<Waves className="h-5 w-5" />} title="Adım Mikroskobu" compact />
+        <StepExplorer
+          task={task}
+          trace={trace}
+          history={history}
+          learningRate={learningRate}
+          onSelectTarget={onSelectTarget}
         />
       </div>
-      <FormulaBox
-        title="Bir epoch içinde olanlar"
-        lines={[
-          "Her örnek için: ŷ = forward(x)",
-          "Loss: L = 1/2 × Σ(ŷ - y)^2",
-          "Geri yayılım: δ = hata × aktivasyon türevi",
-          "Ağırlık: w = w - η × ∂L/∂w"
-        ]}
-      />
-      {newest && (
-        <div className="rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3">
-          <div className="text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
-            Son epoch sonucu
-          </div>
-          <div className="mt-2 text-sm leading-6 text-[#334155]">
-            Epoch {newest.epoch} sırasında veri seti bir kez gezildi. Son görülen örnek{" "}
-            <span className="font-semibold">{newest.sampleName}</span>. Loss{" "}
-            <span className="font-semibold">{formatNumber(newest.lossBefore, 5)}</span> değerinden{" "}
-            <span className="font-semibold">{formatNumber(newest.lossAfter, 5)}</span> değerine geldi.
-          </div>
-        </div>
-      )}
-      <div className="max-h-24 space-y-1 overflow-y-auto">
-        {history.map((item) => (
-          <div
-            key={item.epoch}
-            className="grid grid-cols-[64px_1fr_auto] gap-2 rounded-md border border-[#edf2f7] px-2 py-1 text-xs"
-          >
-            <span className="font-semibold">E{item.epoch}</span>
-            <span className="truncate">
-              {item.sampleName}: {predictionName(task, item.prediction)} →{" "}
-              {predictionName(task, item.predictionAfter)}
-            </span>
-            <span className={item.lossAfter <= item.lossBefore ? "text-[#047857]" : "text-[#b91c1c]"}>
-              {formatNumber(item.lossAfter - item.lossBefore, 5)}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function StepCard({ title, text }: { title: string; text: string }) {
-  return (
-    <div className="min-w-0 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-2">
-      <div className="text-[11px] font-semibold text-[#18202f]">{title}</div>
-      <div className="mt-1 truncate text-[11px] text-[#64748b]" title={text}>
-        {text}
-      </div>
-    </div>
+    </section>
   );
 }
 

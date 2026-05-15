@@ -64,6 +64,14 @@ export interface TrainingTrace {
   edges: EdgeSnapshot[];
 }
 
+export interface EpochTrainingResult {
+  trace: TrainingTrace;
+  samples: TrainingTrace[];
+  lossBefore: number;
+  lossAfter: number;
+  epochLoss: number;
+}
+
 export type Selection =
   | { type: "neuron"; id: string; layerIndex: number; neuronIndex: number }
   | {
@@ -451,19 +459,39 @@ export class NeuralNetwork {
   }
 
   trainEpoch(data: DataPoint[], learningRate: number): TrainingTrace {
+    return this.trainEpochDetailed(data, learningRate).trace;
+  }
+
+  trainEpochDetailed(data: DataPoint[], learningRate: number): EpochTrainingResult {
     if (data.length === 0) {
       const sizes = this.getLayerSizes();
-      return this.inspect(Array(sizes[0]).fill(0), Array(sizes[sizes.length - 1]).fill(0));
+      const trace = this.inspect(
+        Array(sizes[0]).fill(0),
+        Array(sizes[sizes.length - 1]).fill(0)
+      );
+      return {
+        trace,
+        samples: [trace],
+        lossBefore: 0,
+        lossAfter: 0,
+        epochLoss: 0,
+      };
     }
 
+    const lossBefore = this.evaluateLoss(data);
     let totalLoss = 0;
     let trace!: TrainingTrace;
+    const samples: TrainingTrace[] = [];
     data.forEach((point) => {
       trace = this.trainSample(point.inputs, point.targets, learningRate, point.id);
       totalLoss += trace.loss;
+      samples.push(trace);
     });
 
-    return { ...trace, epochLoss: totalLoss / data.length };
+    const epochLoss = totalLoss / data.length;
+    const lossAfter = this.evaluateLoss(data);
+    trace = { ...trace, epochLoss };
+    return { trace, samples, lossBefore, lossAfter, epochLoss };
   }
 
   evaluateLoss(data: DataPoint[]): number {
