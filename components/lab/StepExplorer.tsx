@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { Selection, TrainingTrace } from "@/lib/ml/network";
+import { ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
+import type { Selection, TrainingPhase, TrainingTrace } from "@/lib/ml/network";
 import { formatNumber } from "@/lib/ml/network";
+import type { ConceptMode } from "@/lib/ml/lab-types";
 import type { Task } from "@/lib/ml/tasks";
 import {
   buildCalculationSteps,
@@ -56,17 +58,23 @@ export function StepExplorer({
   trace,
   history,
   learningRate,
+  conceptMode,
   onSelectTarget,
+  onPhaseChange,
 }: {
   task: Task;
   trace: TrainingTrace;
   history: EpochTraceRecord[];
   learningRate: number;
+  conceptMode: ConceptMode;
   onSelectTarget: (selection: Selection | null) => void;
+  onPhaseChange: (phase: TrainingPhase) => void;
 }) {
   const [epochIndex, setEpochIndex] = useState(0);
   const [sampleIndex, setSampleIndex] = useState(0);
   const [stepIndex, setStepIndex] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [speedMs, setSpeedMs] = useState(720);
 
   const boundedEpochIndex = Math.min(epochIndex, Math.max(0, history.length - 1));
   const selectedEpoch = history[boundedEpochIndex];
@@ -81,7 +89,36 @@ export function StepExplorer({
 
   useEffect(() => {
     if (selectedStep?.target) onSelectTarget(selectedStep.target);
-  }, [selectedStep, onSelectTarget]);
+    onPhaseChange(stepPhaseToTrainingPhase(selectedStep?.phase));
+  }, [selectedStep, onSelectTarget, onPhaseChange]);
+
+  useEffect(() => {
+    if (!playing) return undefined;
+    const interval = window.setInterval(() => {
+      setStepIndex((previous) => {
+        if (previous >= selectedSample.steps.length - 1) {
+          setPlaying(false);
+          return previous;
+        }
+        return previous + 1;
+      });
+    }, speedMs);
+    return () => window.clearInterval(interval);
+  }, [playing, selectedSample.steps.length, speedMs]);
+
+  const selectStep = (nextIndex: number) => {
+    setPlaying(false);
+    setStepIndex(Math.max(0, Math.min(selectedSample.steps.length - 1, nextIndex)));
+  };
+
+  const modeExplanation = {
+    beginner:
+      "Bu adımı önce sezgisel oku: girişler ağırlıklarla çarpılır, hata çıktıda ölçülür, sonra bağlantılara paylaştırılır.",
+    math:
+      "Matematik modu: zincir kuralında δ değerleri ∂L/∂z anlamına gelir; ağırlık gradient'i a_prev × δ_next olur.",
+    engineer:
+      "Mühendis modu: bu trace, eğitimden sonra snapshot olarak tutulur; selected target canvas highlight için kullanılır.",
+  }[conceptMode];
 
   return (
     <div className="mt-2 grid h-[166px] grid-cols-[150px_170px_minmax(0,1fr)] gap-2">
@@ -142,6 +179,44 @@ export function StepExplorer({
 
       <div className="grid min-h-0 grid-cols-[210px_minmax(0,1fr)] gap-2">
         <div className="min-h-0 overflow-y-auto rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-1">
+          <div className="sticky top-0 z-10 mb-1 rounded-md border border-[#e2e8f0] bg-white p-1">
+            <div className="grid grid-cols-[30px_30px_30px_1fr] gap-1">
+              <button
+                type="button"
+                className="inline-flex h-7 items-center justify-center rounded border border-[#cbd5e1] text-[#334155]"
+                onClick={() => selectStep(boundedStepIndex - 1)}
+                aria-label="Önceki hesap adımı"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-7 items-center justify-center rounded border border-[#cbd5e1] text-[#334155]"
+                onClick={() => setPlaying((value) => !value)}
+                aria-label={playing ? "Playback durdur" : "Playback başlat"}
+              >
+                {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-7 items-center justify-center rounded border border-[#cbd5e1] text-[#334155]"
+                onClick={() => selectStep(boundedStepIndex + 1)}
+                aria-label="Sonraki hesap adımı"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+              <select
+                className="h-7 rounded border border-[#cbd5e1] px-1 text-[10px]"
+                value={speedMs}
+                onChange={(event) => setSpeedMs(Number(event.target.value))}
+                aria-label="Playback hızı"
+              >
+                <option value={1050}>Yavaş</option>
+                <option value={720}>Normal</option>
+                <option value={420}>Hızlı</option>
+              </select>
+            </div>
+          </div>
           {selectedSample.steps.map((step, index) => (
             <button
               key={step.id}
@@ -162,6 +237,9 @@ export function StepExplorer({
         <div className="min-h-0 overflow-y-auto rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-2">
           <div className="text-xs font-semibold text-[#18202f]">{selectedStep.title}</div>
           <div className="mt-1 text-[11px] leading-5 text-[#526070]">{selectedStep.summary}</div>
+          <div className="mt-2 rounded-md border border-[#dbe3ee] bg-white p-2 text-[11px] leading-5 text-[#526070]">
+            {modeExplanation}
+          </div>
           <div className="mt-2 space-y-1 font-mono text-[11px] text-[#334155]">
             {selectedStep.equations.map((equation) => (
               <div key={equation} className="break-words">
@@ -187,4 +265,10 @@ export function StepExplorer({
       </div>
     </div>
   );
+}
+
+function stepPhaseToTrainingPhase(phase?: CalculationPhase): TrainingPhase {
+  if (phase === "forward") return "forward";
+  if (phase === "backward" || phase === "update") return "backward";
+  return "idle";
 }

@@ -1,5 +1,6 @@
 import type { DataPoint } from "./network";
 import { sanitizePointValue } from "./network";
+import type { ColumnMapping, DatasetMetadata } from "./lab-types";
 import type { Task } from "./tasks";
 
 function splitCsvLine(line: string) {
@@ -25,9 +26,20 @@ function splitCsvLine(line: string) {
   return cells;
 }
 
+export interface DatasetPreview {
+  headers: string[];
+  rows: string[][];
+  sourceType: "csv" | "json";
+}
+
 function parseNumber(value: unknown, fallback = 0) {
   const number = typeof value === "number" ? value : Number(String(value ?? "").replace(",", "."));
   return Number.isFinite(number) ? number : fallback;
+}
+
+function normalizeColumn(value: number, min: number, max: number) {
+  if (Math.abs(max - min) < 1e-9) return sanitizePointValue(value);
+  return sanitizePointValue((value - min) / (max - min));
 }
 
 function oneHot(index: number, size: number) {
@@ -161,6 +173,133 @@ export function parseDatasetText(text: string, task: Task): DataPoint[] {
   }
 
   return parseCsv(trimmed, task);
+}
+
+export function previewDatasetText(text: string): DatasetPreview {
+  const trimmed = text.trim();
+  if (!trimmed) return { headers: [], rows: [], sourceType: "csv" };
+
+  if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+    const parsed = JSON.parse(trimmed) as unknown;
+    const rows = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray((parsed as { data?: unknown[] }).data)
+        ? (parsed as { data: unknown[] }).data
+        : [];
+    const objects = rows.filter((row): row is Record<string, unknown> => !Array.isArray(row) && row !== null);
+    const headers = objects.length > 0 ? Object.keys(objects[0]) : [];
+    return {
+      headers,
+      rows: objects.slice(0, 30).map((row) => headers.map((header) => String(row[header] ?? ""))),
+      sourceType: "json",
+    };
+  }
+
+  const lines = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const first = splitCsvLine(lines[0] ?? "");
+  const hasHeader = first.some((cell) => /[a-zA-Z_]/.test(cell));
+  const headers = hasHeader ? first : first.map((_, index) => `col${index + 1}`);
+  const rows = (hasHeader ? lines.slice(1) : lines).slice(0, 30).map(splitCsvLine);
+  return { headers, rows, sourceType: "csv" };
+}
+
+function recordsFromPreview(text: string, preview: DatasetPreview) {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  if (preview.sourceType === "json") {
+    const parsed = JSON.parse(trimmed) as unknown;
+    const rows = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray((parsed as { data?: unknown[] }).data)
+        ? (parsed as { data: unknown[] }).data
+        : [];
+    return rows
+      .filter((row): row is Record<string, unknown> => !Array.isArray(row) && row !== null)
+      .map((row) => ({ ...row }));
+  }
+
+  const lines = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const first = splitCsvLine(lines[0] ?? "");
+  const hasHeader = first.some((cell) => /[a-zA-Z_]/.test(cell));
+  const headers = hasHeader ? first : first.map((_, index) => `col${index + 1}`);
+  const rows = hasHeader ? lines.slice(1) : lines;
+  return rows.map((line) => {
+    const cells = splitCsvLine(line);
+    return Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? ""]));
+  });
+}
+
+export function parseDatasetWithMapping(
+  text: string,
+  task: Task,
+  mapping: ColumnMapping,
+  name = "import"
+): { data: DataPoint[]; metadata: DatasetMetadata } {
+  const preview = previewDatasetText(text);
+  const records = recordsFromPreview(text, preview);
+  const rejectedRows: string[] = [];
+  const selectedColumns = [...mapping.inputColumns, ...mapping.targetColumns];
+  const numericByColumn = new Map<string, number[]>();
+
+  selectedColumns.forEach((column) => {
+    numericByColumn.set(
+      column,
+      records.map((record) => parseNumber(record[column], 0))
+    );
+  });
+
+  const ranges = new Map(
+    Array.from(numericByColumn.entries()).map(([column, values]) => [
+      column,
+      {
+        min: Math.min(...values),
+        max: Math.max(...values),
+      },
+    ])
+  );
+
+  const data = records.flatMap((record, index) => {
+    const missing = selectedColumns.filter((column) => record[column] === undefined || record[column] === "");
+    if (missing.length > 0) {
+      rejectedRows.push(`${index + 1}. satır eksik kolon: ${missing.join(", ")}`);
+      return [];
+    }
+
+    const inputs = Array.from({ length: task.inputSize }, (_, inputIndex) => {
+      const column = mapping.inputColumns[inputIndex];
+      const raw = parseNumber(record[column], 0);
+      const range = ranges.get(column);
+      return mapping.normalize && range ? normalizeColumn(raw, range.min, range.max) : sanitizePointValue(raw);
+    });
+
+    const targetValues = mapping.targetColumns.map((column) => record[column]);
+    const targets = normalizeTargets(targetValues, task);
+    return {
+      id: `${name}-${index + 1}`,
+      inputs,
+      targets,
+      label: mapping.labelColumn ? String(record[mapping.labelColumn] ?? "") : undefined,
+    };
+  });
+
+  return {
+    data,
+    metadata: {
+      name,
+      rowCount: data.length,
+      inputColumns: mapping.inputColumns,
+      targetColumns: mapping.targetColumns,
+      normalized: mapping.normalize,
+      trainRatio: mapping.trainRatio,
+      rejectedRows,
+    },
+  };
 }
 
 export function datasetTemplate(task: Task) {

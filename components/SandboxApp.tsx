@@ -8,12 +8,16 @@ import {
   BookOpen,
   Database,
   Eye,
+  FlaskConical,
   ImageIcon,
+  Maximize2,
   Minus,
+  MousePointerClick,
   Pause,
   Play,
   Plus,
   RotateCcw,
+  SlidersHorizontal,
   Sigma,
   StepForward,
   Trash2,
@@ -32,6 +36,7 @@ import {
   TrainingPhase,
   TrainingTrace,
   activationLabel,
+  activationValue,
   edgeId,
   formatNumber,
   sanitizePointValue
@@ -40,6 +45,10 @@ import { TASKS, Task, TaskId } from "@/lib/ml/tasks";
 import { DatasetImport } from "@/components/lab/DatasetImport";
 import { StepExplorer } from "@/components/lab/StepExplorer";
 import { buildEpochTraceRecord, type EpochTraceRecord } from "@/lib/ml/trace";
+import type { ConceptMode, DatasetMetadata, VisualizationMode } from "@/lib/ml/lab-types";
+import { lessonsForTask } from "@/lib/ml/lessons";
+import { presetsForTask } from "@/lib/ml/presets";
+import { simulateLearningRates } from "@/lib/ml/experiments";
 
 interface ModelState {
   network: NeuralNetwork;
@@ -104,8 +113,12 @@ export function SandboxApp() {
   const [running, setRunning] = useState(false);
   const [phase, setPhase] = useState<TrainingPhase>("idle");
   const [focusMode, setFocusMode] = useState(false);
+  const [conceptMode, setConceptMode] = useState<ConceptMode>("beginner");
+  const [visualizationMode, setVisualizationMode] = useState<VisualizationMode>("weights");
+  const [datasetMetadata, setDatasetMetadata] = useState<DatasetMetadata | null>(null);
   const [selected, setSelected] = useState<Selection | null>(null);
   const [hovered, setHovered] = useState<Selection | null>(null);
+  const [detailSelection, setDetailSelection] = useState<Selection | null>(null);
   const timers = useRef<number[]>([]);
 
   const clearPhaseTimers = useCallback(() => {
@@ -130,6 +143,8 @@ export function SandboxApp() {
     setRunning(false);
     setSelected(null);
     setHovered(null);
+    setDetailSelection(null);
+    setDatasetMetadata(null);
     setTaskId(nextTask.id);
     setData(nextData);
     setLearningRate(nextTask.defaultLearningRate);
@@ -141,6 +156,7 @@ export function SandboxApp() {
       setRunning(false);
       setSelected(null);
       setHovered(null);
+      setDetailSelection(null);
       setModel((previous) => {
         const seed = previous.seed + 97;
         const next = NeuralNetwork.create(configs, seed);
@@ -181,6 +197,7 @@ export function SandboxApp() {
   );
 
   const resetTaskData = useCallback(() => {
+    setDatasetMetadata(null);
     updateData(cloneData(task.data));
   }, [task.data, updateData]);
 
@@ -219,6 +236,10 @@ export function SandboxApp() {
           loss={model.lossHistory.at(-1) ?? 0}
           accuracy={accuracy}
           focusMode={focusMode}
+          conceptMode={conceptMode}
+          visualizationMode={visualizationMode}
+          onConceptModeChange={setConceptMode}
+          onVisualizationModeChange={setVisualizationMode}
           onToggleFocus={() => setFocusMode((value) => !value)}
         />
 
@@ -228,6 +249,10 @@ export function SandboxApp() {
           network={model.network}
           onTaskChange={switchTask}
           onRebuild={rebuildNetwork}
+          onApplyPreset={(layers, nextLearningRate) => {
+            setLearningRate(nextLearningRate);
+            rebuildNetwork(layers);
+          }}
           onResetWeights={resetWeights}
         />
 
@@ -236,11 +261,13 @@ export function SandboxApp() {
             network={model.network}
             trace={model.trace}
             phase={phase}
+            visualizationMode={visualizationMode}
             focusMode={focusMode}
             selected={selected}
             hovered={hovered}
             onSelect={setSelected}
             onHover={setHovered}
+            onOpenDetail={setDetailSelection}
           />
         </section>
 
@@ -250,8 +277,12 @@ export function SandboxApp() {
           trace={model.trace}
           network={model.network}
           data={data}
+          metadata={datasetMetadata}
+          conceptMode={conceptMode}
           onDataChange={updateData}
+          onMetadataChange={setDatasetMetadata}
           onResetData={resetTaskData}
+          onOpenDetail={setDetailSelection}
         />
 
         <TrainingPanel
@@ -263,8 +294,12 @@ export function SandboxApp() {
           running={running}
           phase={phase}
           trace={model.trace}
+          network={model.network}
+          data={data}
           accuracy={accuracy}
+          conceptMode={conceptMode}
           onSelectTarget={setSelected}
+          onPhaseChange={setPhase}
           onLearningRateChange={setLearningRate}
           onStep={runEpoch}
           onToggleRun={() => {
@@ -272,6 +307,13 @@ export function SandboxApp() {
             setRunning((value) => !value);
           }}
           onReset={resetWeights}
+        />
+        <DetailModal
+          selection={detailSelection}
+          trace={model.trace}
+          learningRate={learningRate}
+          conceptMode={conceptMode}
+          onClose={() => setDetailSelection(null)}
         />
       </div>
     </main>
@@ -284,6 +326,10 @@ function AppHeader({
   loss,
   accuracy,
   focusMode,
+  conceptMode,
+  visualizationMode,
+  onConceptModeChange,
+  onVisualizationModeChange,
   onToggleFocus,
 }: {
   task: Task;
@@ -291,6 +337,10 @@ function AppHeader({
   loss: number;
   accuracy: number | null;
   focusMode: boolean;
+  conceptMode: ConceptMode;
+  visualizationMode: VisualizationMode;
+  onConceptModeChange: (mode: ConceptMode) => void;
+  onVisualizationModeChange: (mode: VisualizationMode) => void;
   onToggleFocus: () => void;
 }) {
   return (
@@ -310,6 +360,26 @@ function AppHeader({
         <HeaderMetric label="Epoch" value={String(epoch)} />
         <HeaderMetric label="Loss" value={formatNumber(loss, 5)} />
         {accuracy !== null && <HeaderMetric label="Doğruluk" value={`${formatNumber(accuracy * 100, 1)}%`} />}
+        <select
+          className="h-9 rounded-md border border-[#cbd5e1] bg-white px-2 text-xs font-semibold text-[#334155]"
+          value={conceptMode}
+          onChange={(event) => onConceptModeChange(event.target.value as ConceptMode)}
+          aria-label="Açıklama modu"
+        >
+          <option value="beginner">Başlangıç</option>
+          <option value="math">Matematik</option>
+          <option value="engineer">Mühendis</option>
+        </select>
+        <select
+          className="h-9 rounded-md border border-[#cbd5e1] bg-white px-2 text-xs font-semibold text-[#334155]"
+          value={visualizationMode}
+          onChange={(event) => onVisualizationModeChange(event.target.value as VisualizationMode)}
+          aria-label="Canvas görselleştirme modu"
+        >
+          <option value="weights">Ağırlık</option>
+          <option value="gradients">Gradient</option>
+          <option value="corrections">Düzeltme</option>
+        </select>
         <button
           type="button"
           className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-semibold ${
@@ -344,6 +414,7 @@ interface ArchitecturePanelProps {
   network: NeuralNetwork;
   onTaskChange: (taskId: TaskId) => void;
   onRebuild: (configs: LayerConfig[]) => void;
+  onApplyPreset: (configs: LayerConfig[], learningRate: number) => void;
   onResetWeights: () => void;
 }
 
@@ -353,6 +424,7 @@ function ArchitecturePanel({
   network,
   onTaskChange,
   onRebuild,
+  onApplyPreset,
   onResetWeights
 }: ArchitecturePanelProps) {
   const [tab, setTab] = useState<"task" | "layers" | "guide">("task");
@@ -416,6 +488,28 @@ function ArchitecturePanel({
               <Stat label="çıkış" value={`${task.outputSize} değer`} />
               <Stat label="tip" value={task.outputType === "regression" ? "Regresyon" : "Sınıflandırma"} />
               <Stat label="veri" value={`${task.data.length} örnek`} />
+            </div>
+
+            <div className="rounded-md border border-[#dbe3ee] bg-white p-3">
+              <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+                <SlidersHorizontal className="h-4 w-4 text-[#2563eb]" />
+                Model Preset
+              </div>
+              <div className="space-y-2">
+                {presetsForTask(task.id).map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className="block w-full rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-2 text-left hover:border-[#2563eb]"
+                    onClick={() => onApplyPreset(preset.layers, preset.learningRate)}
+                  >
+                    <span className="block text-xs font-semibold text-[#18202f]">{preset.name}</span>
+                    <span className="mt-0.5 block text-[11px] leading-4 text-[#64748b]">
+                      {preset.description} · η={formatNumber(preset.learningRate, 2)}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -549,6 +643,7 @@ function LayerRow({
 }
 
 function LearningGuide({ task }: { task: Task }) {
+  const lessons = lessonsForTask(task);
   const imageCopy =
     task.id === "digit"
       ? "Bu görevde her piksel bir giriş nöronudur. Beyaz piksel 0, dolu piksel 1 gibi düşünülür; ağ çizgileri ve şekilleri sayı tahminine çevirir."
@@ -570,6 +665,24 @@ function LearningGuide({ task }: { task: Task }) {
         text="Hata geriye doğru paylaşılır. Büyük katkı yapan bağlantı daha büyük gradient alır ve ağırlığı daha fazla değişir."
       />
       <GuideItem title="4. Resim mantığı" text={imageCopy} />
+      <div className="rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3">
+        <div className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+          Ders Akışı
+        </div>
+        <div className="space-y-2">
+          {lessons.map((lesson, index) => (
+            <div key={lesson.id} className="grid grid-cols-[22px_1fr] gap-2 text-xs leading-5">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#e8f0ff] text-[10px] font-bold text-[#2563eb]">
+                {index + 1}
+              </span>
+              <span>
+                <strong className="text-[#18202f]">{lesson.title}</strong>
+                <span className="block text-[#526070]">{lesson.text}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -587,22 +700,26 @@ interface NetworkCanvasProps {
   network: NeuralNetwork;
   trace: TrainingTrace;
   phase: TrainingPhase;
+  visualizationMode: VisualizationMode;
   focusMode: boolean;
   selected: Selection | null;
   hovered: Selection | null;
   onSelect: (selection: Selection | null) => void;
   onHover: (selection: Selection | null) => void;
+  onOpenDetail: (selection: Selection) => void;
 }
 
 function NetworkCanvas({
   network,
   trace,
   phase,
+  visualizationMode,
   focusMode,
   selected,
   hovered,
   onSelect,
-  onHover
+  onHover,
+  onOpenDetail
 }: NetworkCanvasProps) {
   const width = 980;
   const height = 612;
@@ -720,9 +837,25 @@ function NetworkCanvas({
               };
               const traceEdge = edgeTrace.get(id);
               const active = selected?.id === id || hovered?.id === id;
-              const weightMagnitude = Math.min(1, Math.abs(weight) / 2.4);
-              const stroke = weight >= 0 ? "#2563eb" : "#e11d48";
-              const widthByWeight = 0.85 + weightMagnitude * 5.6;
+              const metric =
+                visualizationMode === "weights"
+                  ? weight
+                  : visualizationMode === "gradients"
+                    ? traceEdge?.gradient ?? 0
+                    : traceEdge?.correction ?? 0;
+              const metricMagnitude = Math.min(
+                1,
+                Math.abs(metric) / (visualizationMode === "weights" ? 2.4 : 0.35)
+              );
+              const stroke =
+                visualizationMode === "corrections"
+                  ? metric >= 0
+                    ? "#059669"
+                    : "#f97316"
+                  : metric >= 0
+                    ? "#2563eb"
+                    : "#e11d48";
+              const widthByWeight = 0.85 + metricMagnitude * 5.8;
               const contributionWidth =
                 1 + Math.min(6, Math.abs(traceEdge?.contribution ?? 0) * 5.5);
               const errorWidth =
@@ -737,7 +870,7 @@ function NetworkCanvas({
                     y2={toPos.y}
                     stroke={stroke}
                     strokeWidth={widthByWeight}
-                    strokeOpacity={active ? 0.75 : 0.16 + weightMagnitude * 0.38}
+                    strokeOpacity={active ? 0.75 : 0.16 + metricMagnitude * 0.38}
                     strokeLinecap="round"
                   />
                   {phase === "forward" && (
@@ -780,6 +913,7 @@ function NetworkCanvas({
                     onMouseEnter={() => onHover(selection)}
                     onMouseLeave={() => onHover(null)}
                     onClick={() => onSelect(selection)}
+                    onDoubleClick={() => onOpenDetail(selection)}
                   />
                 </g>
               );
@@ -826,6 +960,7 @@ function NetworkCanvas({
                 onMouseEnter={() => onHover(selection)}
                 onMouseLeave={() => onHover(null)}
                 onClick={() => onSelect(selection)}
+                onDoubleClick={() => onOpenDetail(selection)}
               >
                 <circle
                   cx={pos.x}
@@ -873,8 +1008,12 @@ interface InspectorPanelProps {
   trace: TrainingTrace;
   network: NeuralNetwork;
   data: DataPoint[];
+  metadata: DatasetMetadata | null;
+  conceptMode: ConceptMode;
   onDataChange: (data: DataPoint[]) => void;
+  onMetadataChange: (metadata: DatasetMetadata | null) => void;
   onResetData: () => void;
+  onOpenDetail: (selection: Selection) => void;
 }
 
 function InspectorPanel({
@@ -883,8 +1022,12 @@ function InspectorPanel({
   trace,
   network,
   data,
+  metadata,
+  conceptMode,
   onDataChange,
+  onMetadataChange,
   onResetData,
+  onOpenDetail,
 }: InspectorPanelProps) {
   const [tab, setTab] = useState<"inspect" | "data">("inspect");
   const neuron =
@@ -913,9 +1056,19 @@ function InspectorPanel({
 
       {tab === "inspect" ? (
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-          {neuron && <NeuronInspector neuron={neuron} />}
-          {edge && <EdgeInspector edge={edge} />}
-          {!neuron && !edge && <TraceSummary task={task} trace={trace} />}
+          {selection && (
+            <button
+              type="button"
+              className="mb-3 inline-flex h-9 items-center gap-2 rounded-md border border-[#cbd5e1] bg-white px-3 text-xs font-semibold text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
+              onClick={() => onOpenDetail(selection)}
+            >
+              <Maximize2 className="h-4 w-4" />
+              Yakın incele
+            </button>
+          )}
+          {neuron && <NeuronInspector neuron={neuron} conceptMode={conceptMode} />}
+          {edge && <EdgeInspector edge={edge} conceptMode={conceptMode} />}
+          {!neuron && !edge && <TraceSummary task={task} trace={trace} conceptMode={conceptMode} />}
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -923,7 +1076,9 @@ function InspectorPanel({
             task={task}
             network={network}
             data={data}
+            metadata={metadata}
             onDataChange={onDataChange}
+            onMetadataChange={onMetadataChange}
             onResetData={onResetData}
           />
         </div>
@@ -932,7 +1087,7 @@ function InspectorPanel({
   );
 }
 
-function TraceSummary({ task, trace }: { task: Task; trace: TrainingTrace }) {
+function TraceSummary({ task, trace, conceptMode }: { task: Task; trace: TrainingTrace; conceptMode: ConceptMode }) {
   const prediction = predictionName(task, trace.prediction);
   const target = targetName(task, trace.target);
   const inputPreview = trace.input
@@ -972,13 +1127,19 @@ function TraceSummary({ task, trace }: { task: Task; trace: TrainingTrace }) {
       />
       <ExplainBox
         title="Ne anlama geliyor?"
-        text="Loss küçülüyorsa ağ, veri setindeki örnekleri daha az hatayla açıklamaya başlıyor. Tek bir epoch, veri setindeki tüm örneklerden bir kez geçmek demektir."
+        text={
+          conceptMode === "math"
+            ? "Bu loss, 1/2 × kare hata toplamıdır. Türevi basitleştirmek için 1/2 kullanılır; ∂L/∂ŷ = ŷ - y olur."
+            : conceptMode === "engineer"
+              ? "Trace snapshot'ı son örneğin forward, delta ve update bilgilerini UI için dondurur. Eğitim geçmişindeki adımlar ayrıca saklanır."
+              : "Loss küçülüyorsa ağ, veri setindeki örnekleri daha az hatayla açıklamaya başlıyor. Tek bir epoch, veri setindeki tüm örneklerden bir kez geçmek demektir."
+        }
       />
     </div>
   );
 }
 
-function NeuronInspector({ neuron }: { neuron: NeuronSnapshot }) {
+function NeuronInspector({ neuron, conceptMode }: { neuron: NeuronSnapshot; conceptMode: ConceptMode }) {
   const topIncoming = [...neuron.incoming]
     .sort((a, b) => Math.abs(b.product) - Math.abs(a.product))
     .slice(0, 6);
@@ -1000,9 +1161,16 @@ function NeuronInspector({ neuron }: { neuron: NeuronSnapshot }) {
         <Stat label="∂L/∂b" value={formatNumber(neuron.gradientBias)} />
       </div>
       <FormulaBox title="Nöron hesabı" lines={[neuron.formula, `a = ${neuron.activation}(Σ)`]} />
+      <ActivationMiniChart neuron={neuron} />
       <ExplainBox
         title="Bu nöron ne yapıyor?"
-        text="Gelen sinyalleri ağırlıklarıyla çarpar, bias ekler ve aktivasyon fonksiyonu ile sonucu sıkıştırır ya da geçirir. δ değeri, bu nöronun son hataya ne kadar pay verdiğini gösterir."
+        text={
+          conceptMode === "math"
+            ? "z ağırlıklı toplamdır; a=f(z) çıktıdır. Backprop sırasında δ=∂L/∂z tutulur ve bias gradient'i doğrudan δ olur."
+            : conceptMode === "engineer"
+              ? "Bu değerler `NeuronSnapshot` içinden gelir. Snapshot eğitim adımından sonra saklandığı için denetçi ve modal aynı gerçeği okur."
+              : "Gelen sinyalleri ağırlıklarıyla çarpar, bias ekler ve aktivasyon fonksiyonu ile sonucu sıkıştırır ya da geçirir. δ değeri, bu nöronun son hataya ne kadar pay verdiğini gösterir."
+        }
       />
       {topIncoming.length > 0 && (
         <div className="rounded-md border border-[#dbe3ee]">
@@ -1029,7 +1197,44 @@ function NeuronInspector({ neuron }: { neuron: NeuronSnapshot }) {
   );
 }
 
-function EdgeInspector({ edge }: { edge: EdgeSnapshot }) {
+function ActivationMiniChart({ neuron }: { neuron: NeuronSnapshot }) {
+  const width = 300;
+  const height = 104;
+  const xScale = scaleLinear().domain([-3, 3]).range([18, width - 12]);
+  const yScale = scaleLinear()
+    .domain(neuron.activation === "tanh" ? [-1.2, 1.2] : [-0.15, 1.15])
+    .range([height - 16, 10]);
+  const values = Array.from({ length: 90 }, (_, index) => {
+    const z = -3 + (index / 89) * 6;
+    return { z, value: activationValue(neuron.activation, z) };
+  });
+  const path =
+    line<{ z: number; value: number }>()
+      .x((point) => xScale(point.z))
+      .y((point) => yScale(point.value))(values) ?? "";
+  const markerX = xScale(Math.max(-3, Math.min(3, neuron.z)));
+  const markerY = yScale(neuron.value);
+
+  return (
+    <div className="rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3">
+      <div className="mb-2 flex items-center justify-between text-xs">
+        <span className="font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+          Aktivasyon Eğrisi
+        </span>
+        <span className="font-mono text-[#334155]">f&apos;={formatNumber(neuron.derivative, 4)}</span>
+      </div>
+      <svg className="h-[104px] w-full" viewBox={`0 0 ${width} ${height}`}>
+        <rect width={width} height={height} rx={6} fill="#ffffff" stroke="#dbe3ee" />
+        <line x1={18} x2={width - 12} y1={yScale(0)} y2={yScale(0)} stroke="#e2e8f0" />
+        <line x1={xScale(0)} x2={xScale(0)} y1={10} y2={height - 16} stroke="#e2e8f0" />
+        <path d={path} fill="none" stroke="#2563eb" strokeWidth={2.4} />
+        <circle cx={markerX} cy={markerY} r={4.5} fill="#f97316" stroke="#ffffff" strokeWidth={1.5} />
+      </svg>
+    </div>
+  );
+}
+
+function EdgeInspector({ edge, conceptMode }: { edge: EdgeSnapshot; conceptMode: ConceptMode }) {
   return (
     <div className="space-y-3">
       <div>
@@ -1057,7 +1262,13 @@ function EdgeInspector({ edge }: { edge: EdgeSnapshot }) {
       />
       <ExplainBox
         title="Neden değişti?"
-        text="Gradient pozitifse ağırlığı azaltmak loss'u düşürmeye çalışır; gradient negatifse ağırlık artırılır. Learning rate bu adımın büyüklüğünü belirler."
+        text={
+          conceptMode === "math"
+            ? "Ağırlık update kuralı w := w - η∂L/∂w. Burada ∂L/∂w = a_prev × δ_next olarak zincir kuralından gelir."
+            : conceptMode === "engineer"
+              ? "Edge snapshot hem eski ağırlığı hem hesaplanan correction'ı taşır; canvas heatmap aynı gradient/correction değerlerinden beslenir."
+              : "Gradient pozitifse ağırlığı azaltmak loss'u düşürmeye çalışır; gradient negatifse ağırlık artırılır. Learning rate bu adımın büyüklüğünü belirler."
+        }
       />
     </div>
   );
@@ -1067,11 +1278,13 @@ interface DatasetPanelProps {
   task: Task;
   network: NeuralNetwork;
   data: DataPoint[];
+  metadata?: DatasetMetadata | null;
   onDataChange: (data: DataPoint[]) => void;
+  onMetadataChange?: (metadata: DatasetMetadata | null) => void;
   onResetData: () => void;
 }
 
-function DatasetPanel({ task, network, data, onDataChange, onResetData }: DatasetPanelProps) {
+function DatasetPanel({ task, network, data, metadata, onDataChange, onMetadataChange, onResetData }: DatasetPanelProps) {
   return (
     <div>
       <PanelTitle
@@ -1079,7 +1292,22 @@ function DatasetPanel({ task, network, data, onDataChange, onResetData }: Datase
         title={task.id === "digit" ? "Resim Verisi" : "Veri"}
         compact
       />
-      <DatasetImport task={task} onDataLoaded={onDataChange} onReset={onResetData} />
+      <DatasetImport
+        task={task}
+        onDataLoaded={onDataChange}
+        onMetadata={onMetadataChange}
+        onReset={onResetData}
+      />
+      {metadata && (
+        <div className="mt-3 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3 text-xs leading-5 text-[#526070]">
+          <div className="font-semibold text-[#18202f]">{metadata.name}</div>
+          <div>{metadata.rowCount} örnek · train oranı {Math.round(metadata.trainRatio * 100)}%</div>
+          <div>Input: {metadata.inputColumns.join(", ")} · Target: {metadata.targetColumns.join(", ")}</div>
+          {metadata.rejectedRows.length > 0 && (
+            <div className="mt-1 text-[#b91c1c]">{metadata.rejectedRows.length} satır atlandı.</div>
+          )}
+        </div>
+      )}
       {task.id === "digit" ? (
         <DigitDatasetPanel
           task={task}
@@ -1410,8 +1638,12 @@ interface TrainingPanelProps {
   running: boolean;
   phase: TrainingPhase;
   trace: TrainingTrace;
+  network: NeuralNetwork;
+  data: DataPoint[];
   accuracy: number | null;
+  conceptMode: ConceptMode;
   onSelectTarget: (selection: Selection | null) => void;
+  onPhaseChange: (phase: TrainingPhase) => void;
   onLearningRateChange: (value: number) => void;
   onStep: () => void;
   onToggleRun: () => void;
@@ -1427,15 +1659,19 @@ function TrainingPanel({
   running,
   phase,
   trace,
+  network,
+  data,
   accuracy,
+  conceptMode,
   onSelectTarget,
+  onPhaseChange,
   onLearningRateChange,
   onStep,
   onToggleRun,
   onReset
 }: TrainingPanelProps) {
   return (
-    <section className="col-span-3 grid min-h-0 grid-cols-[284px_400px_minmax(0,1fr)] gap-px bg-[#d7dde8]">
+    <section className="col-span-3 grid min-h-0 grid-cols-[284px_360px_260px_minmax(0,1fr)] gap-px bg-[#d7dde8]">
       <div className="min-h-0 overflow-y-auto bg-white px-4 py-3">
         <PanelTitle icon={<Zap className="h-5 w-5" />} title="Eğitim" compact />
         <div className="mt-2 flex items-center gap-2">
@@ -1488,9 +1724,17 @@ function TrainingPanel({
           trace={trace}
           history={history}
           learningRate={learningRate}
+          conceptMode={conceptMode}
           onSelectTarget={onSelectTarget}
+          onPhaseChange={onPhaseChange}
         />
       </div>
+      <LearningRateExperiment
+        network={network}
+        data={data}
+        currentRate={learningRate}
+        onApply={onLearningRateChange}
+      />
     </section>
   );
 }
@@ -1549,6 +1793,160 @@ function LossChart({ values }: { values: number[] }) {
         />
       ))}
     </svg>
+  );
+}
+
+function LearningRateExperiment({
+  network,
+  data,
+  currentRate,
+  onApply,
+}: {
+  network: NeuralNetwork;
+  data: DataPoint[];
+  currentRate: number;
+  onApply: (rate: number) => void;
+}) {
+  const rates = useMemo(() => {
+    const candidates = [currentRate * 0.25, currentRate * 0.5, currentRate, currentRate * 1.5, currentRate * 2];
+    return candidates.map((rate) => Math.max(0.005, Math.min(0.8, Number(rate.toFixed(3)))));
+  }, [currentRate]);
+  const trials = useMemo(() => simulateLearningRates(network, data, rates), [network, data, rates]);
+  const best = trials.reduce((winner, trial) => (trial.lossAfter < winner.lossAfter ? trial : winner), trials[0]);
+  const maxLoss = Math.max(0.001, ...trials.map((trial) => trial.lossAfter));
+
+  return (
+    <div className="min-h-0 overflow-y-auto bg-white px-4 py-3">
+      <PanelTitle icon={<FlaskConical className="h-5 w-5" />} title="LR Deneyi" compact />
+      <div className="mt-2 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-2 text-[11px] leading-5 text-[#526070]">
+        Model kopyalanır, 1 epoch simüle edilir; gerçek ağırlıklar değişmez.
+      </div>
+      <div className="mt-2 space-y-2">
+        {trials.map((trial) => {
+          const good = trial.delta < 0;
+          return (
+            <button
+              key={trial.learningRate}
+              type="button"
+              className={`block w-full rounded-md border p-2 text-left ${
+                best?.learningRate === trial.learningRate
+                  ? "border-[#2563eb] bg-[#eef4ff]"
+                  : "border-[#dbe3ee] bg-white hover:border-[#2563eb]"
+              }`}
+              onClick={() => onApply(trial.learningRate)}
+            >
+              <div className="flex items-center justify-between text-[11px] font-semibold text-[#18202f]">
+                <span>η={formatNumber(trial.learningRate, 3)}</span>
+                <span className={good ? "text-[#047857]" : "text-[#b91c1c]"}>
+                  {good ? "düşer" : "artar"}
+                </span>
+              </div>
+              <div className="mt-1 h-1.5 rounded-full bg-[#e2e8f0]">
+                <div
+                  className="h-1.5 rounded-full bg-[#2563eb]"
+                  style={{ width: `${Math.max(3, (trial.lossAfter / maxLoss) * 100)}%` }}
+                />
+              </div>
+              <div className="mt-1 text-[10px] text-[#64748b]">
+                {formatNumber(trial.lossBefore, 4)} → {formatNumber(trial.lossAfter, 4)}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DetailModal({
+  selection,
+  trace,
+  learningRate,
+  conceptMode,
+  onClose,
+}: {
+  selection: Selection | null;
+  trace: TrainingTrace;
+  learningRate: number;
+  conceptMode: ConceptMode;
+  onClose: () => void;
+}) {
+  const neuron =
+    selection?.type === "neuron" ? trace.neurons.find((item) => item.id === selection.id) ?? null : null;
+  const edge = selection?.type === "edge" ? trace.edges.find((item) => item.id === selection.id) ?? null : null;
+  if (!selection || (!neuron && !edge)) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0f172a]/45 p-6">
+      <div className="max-h-[88vh] w-full max-w-5xl overflow-hidden rounded-lg border border-[#cbd5e1] bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-[#e2e8f0] px-5 py-4">
+          <div>
+            <div className="flex items-center gap-2 text-base font-semibold">
+              <MousePointerClick className="h-5 w-5 text-[#2563eb]" />
+              {neuron ? "Nöron Yakınlaştırma" : "Bağlantı / Ağırlık Yakınlaştırma"}
+            </div>
+            <div className="mt-1 text-xs text-[#64748b]">
+              Learning rate η={formatNumber(learningRate, 4)} · mod {conceptMode}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#cbd5e1] text-[#334155] hover:border-[#ef4444] hover:text-[#b91c1c]"
+            onClick={onClose}
+            aria-label="Yakın incelemeyi kapat"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="max-h-[calc(88vh-73px)] overflow-y-auto p-5">
+          {neuron && (
+            <div className="grid grid-cols-[minmax(0,1fr)_320px] gap-4">
+              <div className="space-y-4">
+                <NeuronInspector neuron={neuron} conceptMode={conceptMode} />
+              </div>
+              <div className="space-y-3 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+                  Tam Denklem
+                </div>
+                <div className="space-y-2 font-mono text-sm leading-6 text-[#18202f]">
+                  <div>{neuron.formula}</div>
+                  <div>z = {formatNumber(neuron.z, 8)}</div>
+                  <div>a = {neuron.activation}(z) = {formatNumber(neuron.value, 8)}</div>
+                  <div>δ = {formatNumber(neuron.delta, 8)}</div>
+                  <div>∂L/∂b = {formatNumber(neuron.gradientBias, 8)}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {edge && (
+            <div className="grid grid-cols-[minmax(0,1fr)_320px] gap-4">
+              <div className="space-y-4">
+                <EdgeInspector edge={edge} conceptMode={conceptMode} />
+              </div>
+              <div className="space-y-3 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+                  Update Mikroskobu
+                </div>
+                <div className="space-y-2 font-mono text-sm leading-6 text-[#18202f]">
+                  <div>∂L/∂w = {formatNumber(edge.gradient, 8)}</div>
+                  <div>Δw = -η × gradient</div>
+                  <div>
+                    Δw = -{formatNumber(learningRate, 6)} × {formatNumber(edge.gradient, 8)} ={" "}
+                    {formatNumber(edge.correction, 8)}
+                  </div>
+                  <div>
+                    w_new = {formatNumber(edge.weightBefore, 8)} + {formatNumber(edge.correction, 8)} ={" "}
+                    {formatNumber(edge.weightAfter, 8)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
