@@ -211,8 +211,8 @@ export function SandboxApp() {
   const accuracy = task.outputType === "classification" ? model.network.evaluateAccuracy(data) : null;
 
   return (
-    <main className="h-screen min-h-[820px] min-w-[1280px] overflow-hidden bg-[#f5f7fb] text-[#18202f]">
-      <div className="grid h-full grid-cols-[320px_minmax(0,1fr)_380px] grid-rows-[64px_minmax(0,1fr)_260px] gap-px bg-[#d7dde8]">
+    <main className="h-screen min-h-[720px] min-w-[1280px] overflow-hidden bg-[#f5f7fb] text-[#18202f]">
+      <div className="grid h-full grid-cols-[320px_minmax(0,1fr)_380px] grid-rows-[60px_minmax(0,1fr)_224px] gap-px bg-[#d7dde8]">
         <AppHeader
           task={task}
           epoch={model.epoch}
@@ -296,7 +296,7 @@ function AppHeader({
   return (
     <header className="col-span-3 flex items-center justify-between bg-white px-5">
       <div className="flex min-w-0 items-center gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[#e8f0ff] text-[#2563eb]">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[#e8f0ff] text-[#2563eb]">
           <BrainCircuit className="h-5 w-5" />
         </div>
         <div className="min-w-0">
@@ -312,7 +312,7 @@ function AppHeader({
         {accuracy !== null && <HeaderMetric label="Doğruluk" value={`${formatNumber(accuracy * 100, 1)}%`} />}
         <button
           type="button"
-          className={`inline-flex h-10 items-center gap-2 rounded-md border px-3 text-xs font-semibold ${
+          className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-semibold ${
             focusMode
               ? "border-[#2563eb] bg-[#2563eb] text-white"
               : "border-[#cbd5e1] bg-white text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
@@ -329,7 +329,7 @@ function AppHeader({
 
 function HeaderMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-24 rounded-md border border-[#dbe3ee] bg-[#fbfdff] px-3 py-1.5">
+    <div className="min-w-24 rounded-md border border-[#dbe3ee] bg-[#fbfdff] px-3 py-1">
       <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
         {label}
       </div>
@@ -355,6 +355,7 @@ function ArchitecturePanel({
   onRebuild,
   onResetWeights
 }: ArchitecturePanelProps) {
+  const [tab, setTab] = useState<"task" | "layers" | "guide">("task");
   const configs = network.getLayerConfigs();
   const hiddenConfigs = configs.slice(1, -1);
 
@@ -370,83 +371,117 @@ function ArchitecturePanel({
   };
 
   return (
-    <aside className="row-span-1 overflow-y-auto bg-white px-4 py-4">
-      <PanelTitle icon={<Sigma className="h-5 w-5" />} title="Ağ Mimarisi" />
-
-      <label className="mt-4 block">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
-          Öğrenme görevi
-        </span>
-        <select
-          className="mt-2 h-10 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold"
-          value={taskId}
-          onChange={(event) => onTaskChange(event.target.value as TaskId)}
-        >
-          {TASKS.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name} - {item.description}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <div className="mt-4 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3 text-sm leading-5 text-[#334155]">
-        <div className="mb-1 font-semibold">{task.name}</div>
-        {task.explanation}
-      </div>
-
-      <div className="mt-5 space-y-3">
-        <LayerRow label="Input" detail={`${task.inputSize} özellik`} count={configs[0].size} locked />
-        {hiddenConfigs.map((config, index) => {
-          const layerIndex = index + 1;
-          return (
-            <LayerRow
-              key={`hidden-${index}`}
-              label={`Hidden ${index + 1}`}
-              detail={activationLabel(config.activation ?? "sigmoid")}
-              count={config.size}
-              activation={config.activation ?? "sigmoid"}
-              onActivationChange={(activation) => updateActivation(layerIndex, activation)}
-              onDecrease={() => {
-                const next = [...hiddenConfigs];
-                next[index] = { ...next[index], size: Math.max(1, next[index].size - 1) };
-                rebuildHidden(next);
-              }}
-              onIncrease={() => {
-                const max = task.inputSize > 10 ? 18 : 10;
-                const next = [...hiddenConfigs];
-                next[index] = { ...next[index], size: Math.min(max, next[index].size + 1) };
-                rebuildHidden(next);
-              }}
-              onRemove={() => {
-                rebuildHidden(hiddenConfigs.filter((_, itemIndex) => itemIndex !== index));
-              }}
-            />
-          );
-        })}
-        <LayerRow
-          label="Output"
-          detail={`${task.outputSize} çıktı · ${activationLabel(configs.at(-1)?.activation ?? "linear")}`}
-          count={configs.at(-1)?.size ?? task.outputSize}
-          locked
+    <aside className="min-h-0 overflow-hidden bg-white">
+      <div className="border-b border-[#e2e8f0] px-4 py-4">
+        <PanelTitle icon={<Sigma className="h-5 w-5" />} title="Lab Kurulumu" />
+        <SegmentedControl
+          className="mt-4"
+          items={[
+            { id: "task", label: "Görev" },
+            { id: "layers", label: "Mimari" },
+            { id: "guide", label: "Rehber" },
+          ]}
+          value={tab}
+          onChange={(value) => setTab(value as typeof tab)}
         />
       </div>
 
-      <div className="mt-5 grid grid-cols-2 gap-2">
-        <ActionButton
-          icon={<Plus className="h-4 w-4" />}
-          label="Katman"
-          onClick={() => rebuildHidden([...hiddenConfigs, { size: task.inputSize > 10 ? 8 : 4, activation: "sigmoid" }])}
-          disabled={hiddenConfigs.length >= 4}
-        />
-        <ActionButton
-          icon={<RotateCcw className="h-4 w-4" />}
-          label="Ağırlık"
-          onClick={onResetWeights}
-        />
-      </div>
+      <div className="h-[calc(100%-97px)] overflow-y-auto px-4 py-4">
+        {tab === "task" && (
+          <div className="space-y-4">
+            <label className="block">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+                Öğrenme görevi
+              </span>
+              <select
+                className="mt-2 h-10 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold"
+                value={taskId}
+                onChange={(event) => onTaskChange(event.target.value as TaskId)}
+              >
+                {TASKS.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name} - {item.description}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-      <LearningGuide task={task} />
+            <div className="rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3 text-sm leading-6 text-[#334155]">
+              <div className="mb-1 font-semibold">{task.name}</div>
+              {task.explanation}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <Stat label="giriş" value={`${task.inputSize} özellik`} />
+              <Stat label="çıkış" value={`${task.outputSize} değer`} />
+              <Stat label="tip" value={task.outputType === "regression" ? "Regresyon" : "Sınıflandırma"} />
+              <Stat label="veri" value={`${task.data.length} örnek`} />
+            </div>
+          </div>
+        )}
+
+        {tab === "layers" && (
+          <div>
+            <div className="space-y-3">
+              <LayerRow label="Input" detail={`${task.inputSize} özellik`} count={configs[0].size} locked />
+              {hiddenConfigs.map((config, index) => {
+                const layerIndex = index + 1;
+                return (
+                  <LayerRow
+                    key={`hidden-${index}`}
+                    label={`Hidden ${index + 1}`}
+                    detail={activationLabel(config.activation ?? "sigmoid")}
+                    count={config.size}
+                    activation={config.activation ?? "sigmoid"}
+                    onActivationChange={(activation) => updateActivation(layerIndex, activation)}
+                    onDecrease={() => {
+                      const next = [...hiddenConfigs];
+                      next[index] = { ...next[index], size: Math.max(1, next[index].size - 1) };
+                      rebuildHidden(next);
+                    }}
+                    onIncrease={() => {
+                      const max = task.inputSize > 10 ? 18 : 10;
+                      const next = [...hiddenConfigs];
+                      next[index] = { ...next[index], size: Math.min(max, next[index].size + 1) };
+                      rebuildHidden(next);
+                    }}
+                    onRemove={() => {
+                      rebuildHidden(hiddenConfigs.filter((_, itemIndex) => itemIndex !== index));
+                    }}
+                  />
+                );
+              })}
+              <LayerRow
+                label="Output"
+                detail={`${task.outputSize} çıktı · ${activationLabel(configs.at(-1)?.activation ?? "linear")}`}
+                count={configs.at(-1)?.size ?? task.outputSize}
+                locked
+              />
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <ActionButton
+                icon={<Plus className="h-4 w-4" />}
+                label="Katman"
+                onClick={() =>
+                  rebuildHidden([
+                    ...hiddenConfigs,
+                    { size: task.inputSize > 10 ? 8 : 4, activation: "sigmoid" },
+                  ])
+                }
+                disabled={hiddenConfigs.length >= 4}
+              />
+              <ActionButton
+                icon={<RotateCcw className="h-4 w-4" />}
+                label="Ağırlık"
+                onClick={onResetWeights}
+              />
+            </div>
+          </div>
+        )}
+
+        {tab === "guide" && <LearningGuide task={task} />}
+      </div>
     </aside>
   );
 }
@@ -520,7 +555,7 @@ function LearningGuide({ task }: { task: Task }) {
       : "Görüntü tanımada da aynı matematik çalışır: x değerleri piksel parlaklıkları olur, ağ bunlardan kenar, çizgi ve sınıf sinyalleri üretmeyi öğrenir.";
 
   return (
-    <div className="mt-6 space-y-3 border-t border-[#e2e8f0] pt-4">
+    <div className="space-y-3">
       <PanelTitle icon={<BookOpen className="h-5 w-5" />} title="Başlangıç Rehberi" compact />
       <GuideItem
         title="1. Forward pass"
@@ -851,6 +886,7 @@ function InspectorPanel({
   onDataChange,
   onResetData,
 }: InspectorPanelProps) {
+  const [tab, setTab] = useState<"inspect" | "data">("inspect");
   const neuron =
     selection?.type === "neuron"
       ? trace.neurons.find((item) => item.id === selection.id) ?? null
@@ -861,24 +897,37 @@ function InspectorPanel({
       : null;
 
   return (
-    <aside className="row-span-1 flex min-h-0 flex-col bg-white">
+    <aside className="flex min-h-0 flex-col overflow-hidden bg-white">
       <div className="border-b border-[#e2e8f0] px-4 py-4">
         <PanelTitle icon={<Activity className="h-5 w-5" />} title="Denetçi" />
+        <SegmentedControl
+          className="mt-4"
+          items={[
+            { id: "inspect", label: "Hesap" },
+            { id: "data", label: "Veri" },
+          ]}
+          value={tab}
+          onChange={(value) => setTab(value as typeof tab)}
+        />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-        {neuron && <NeuronInspector neuron={neuron} />}
-        {edge && <EdgeInspector edge={edge} />}
-        {!neuron && !edge && <TraceSummary task={task} trace={trace} />}
-      </div>
-
-      <DatasetPanel
-        task={task}
-        network={network}
-        data={data}
-        onDataChange={onDataChange}
-        onResetData={onResetData}
-      />
+      {tab === "inspect" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+          {neuron && <NeuronInspector neuron={neuron} />}
+          {edge && <EdgeInspector edge={edge} />}
+          {!neuron && !edge && <TraceSummary task={task} trace={trace} />}
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+          <DatasetPanel
+            task={task}
+            network={network}
+            data={data}
+            onDataChange={onDataChange}
+            onResetData={onResetData}
+          />
+        </div>
+      )}
     </aside>
   );
 }
@@ -1024,7 +1073,7 @@ interface DatasetPanelProps {
 
 function DatasetPanel({ task, network, data, onDataChange, onResetData }: DatasetPanelProps) {
   return (
-    <div className="border-t border-[#e2e8f0] px-4 py-4">
+    <div>
       <PanelTitle
         icon={task.id === "digit" ? <ImageIcon className="h-5 w-5" /> : <Database className="h-5 w-5" />}
         title={task.id === "digit" ? "Resim Verisi" : "Veri"}
@@ -1386,10 +1435,10 @@ function TrainingPanel({
   onReset
 }: TrainingPanelProps) {
   return (
-    <section className="col-span-3 grid grid-cols-[350px_minmax(0,1fr)_430px] gap-px bg-[#d7dde8]">
-      <div className="bg-white px-4 py-4">
+    <section className="col-span-3 grid min-h-0 grid-cols-[284px_400px_minmax(0,1fr)] gap-px bg-[#d7dde8]">
+      <div className="min-h-0 overflow-y-auto bg-white px-4 py-3">
         <PanelTitle icon={<Zap className="h-5 w-5" />} title="Eğitim" compact />
-        <div className="mt-4 flex items-center gap-2">
+        <div className="mt-2 flex items-center gap-2">
           <ActionButton icon={<StepForward className="h-4 w-4" />} label="1 Epoch" onClick={onStep} />
           <IconButton title={running ? "Durdur" : "Sürekli eğit"} onClick={onToggleRun}>
             {running ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
@@ -1398,7 +1447,7 @@ function TrainingPanel({
             <RotateCcw className="h-5 w-5" />
           </IconButton>
         </div>
-        <div className="mt-4">
+        <div className="mt-2">
           <div className="mb-2 flex items-center justify-between text-xs font-medium text-[#526070]">
             <span>Learning Rate</span>
             <span>{formatNumber(learningRate, 3)}</span>
@@ -1414,7 +1463,7 @@ function TrainingPanel({
             onChange={(event) => onLearningRateChange(Number(event.target.value))}
           />
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-2">
+        <div className="mt-2 grid grid-cols-2 gap-2">
           <Stat label="epoch" value={String(epoch)} />
           <Stat label="faz" value={phase} />
           <Stat label="loss" value={formatNumber(lossHistory.at(-1) ?? 0, 6)} />
@@ -1422,7 +1471,7 @@ function TrainingPanel({
         </div>
       </div>
 
-      <div className="bg-white px-4 py-4">
+      <div className="min-h-0 overflow-hidden bg-white px-4 py-3">
         <div className="mb-3 flex items-center justify-between">
           <PanelTitle icon={<BarChart3 className="h-5 w-5" />} title="Loss Grafiği" compact />
           <div className="text-xs font-semibold text-[#64748b]">
@@ -1432,7 +1481,7 @@ function TrainingPanel({
         <LossChart values={lossHistory} />
       </div>
 
-      <div className="overflow-y-auto bg-white px-4 py-4">
+      <div className="min-h-0 overflow-hidden bg-white px-4 py-3">
         <PanelTitle icon={<Waves className="h-5 w-5" />} title="Adım Mikroskobu" compact />
         <StepExplorer
           task={task}
@@ -1473,7 +1522,7 @@ function OutputBars({ task, values }: { task: Task; values: number[] }) {
 
 function LossChart({ values }: { values: number[] }) {
   const width = 650;
-  const height = 126;
+  const height = 104;
   const maxLoss = Math.max(0.001, ...values);
   const xScale = scaleLinear()
     .domain([0, Math.max(1, values.length - 1)])
@@ -1486,7 +1535,7 @@ function LossChart({ values }: { values: number[] }) {
       .y((value) => yScale(value))(chartValues) ?? "";
 
   return (
-    <svg className="h-[138px] w-full" viewBox={`0 0 ${width} ${height}`}>
+    <svg className="h-[116px] w-full" viewBox={`0 0 ${width} ${height}`}>
       <rect width={width} height={height} rx={6} fill="#fbfdff" stroke="#dbe3ee" />
       <line x1={8} y1={height - 18} x2={width - 10} y2={height - 18} stroke="#dbe3ee" />
       <path d={path} fill="none" stroke="#2563eb" strokeWidth={3} strokeLinecap="round" />
@@ -1516,6 +1565,37 @@ function PanelTitle({
     <div className={`flex items-center gap-2 ${compact ? "text-sm" : "text-base"} font-semibold`}>
       <span className="text-[#2563eb]">{icon}</span>
       <span>{title}</span>
+    </div>
+  );
+}
+
+function SegmentedControl({
+  items,
+  value,
+  onChange,
+  className = "",
+}: {
+  items: Array<{ id: string; label: string }>;
+  value: string;
+  onChange: (value: string) => void;
+  className?: string;
+}) {
+  return (
+    <div className={`grid rounded-md border border-[#dbe3ee] bg-[#f8fafc] p-1 ${className}`} style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
+      {items.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          className={`h-8 rounded-[5px] px-2 text-xs font-semibold transition ${
+            value === item.id
+              ? "bg-white text-[#18202f] shadow-sm"
+              : "text-[#64748b] hover:text-[#2563eb]"
+          }`}
+          onClick={() => onChange(item.id)}
+        >
+          {item.label}
+        </button>
+      ))}
     </div>
   );
 }

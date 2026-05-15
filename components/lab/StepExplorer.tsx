@@ -84,7 +84,7 @@ export function StepExplorer({
   }, [selectedStep, onSelectTarget]);
 
   return (
-    <div className="mt-3 grid h-[164px] grid-cols-[132px_142px_1fr] gap-2">
+    <div className="mt-2 grid h-[166px] grid-cols-[150px_170px_minmax(0,1fr)] gap-2">
       <div className="min-h-0 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-2">
         <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
           Epoch
@@ -140,7 +140,7 @@ export function StepExplorer({
         </div>
       </div>
 
-      <div className="grid min-h-0 grid-cols-[168px_1fr] gap-2">
+      <div className="grid min-h-0 grid-cols-[210px_minmax(0,1fr)] gap-2">
         <div className="min-h-0 overflow-y-auto rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-1">
           {selectedSample.steps.map((step, index) => (
             <button
