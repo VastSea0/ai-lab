@@ -27,7 +27,12 @@ export type ConceptId =
   | "backprop"
   | "regression"
   | "classification"
-  | "normalization";
+  | "normalization"
+  | "deep-learning"
+  | "nlp"
+  | "tokenization"
+  | "bag-of-words"
+  | "embedding";
 
 export interface ConceptLevelCopy {
   beginner: string;
@@ -309,6 +314,73 @@ export const CONCEPTS: Concept[] = [
       engineer: "Dataset Studio sayısal kolonları 0-1 aralığına taşıyabilir.",
     },
     related: ["gradient", "learning-rate"],
+  },
+  {
+    id: "deep-learning",
+    title: "Deep Learning",
+    category: "task",
+    summary: "Birden fazla hidden katmanla veriden ara temsiller öğrenmektir.",
+    formula: "x → hidden1 → hidden2 → ... → y",
+    example: "Pikseller önce çizgi/şekil sinyaline, sonra sınıf skoruna dönüşebilir.",
+    copy: {
+      beginner: "Deep learning, modelin tek adımda cevap vermek yerine katman katman ara anlamlar üretmesidir.",
+      math: "Her katman affine dönüşüm ve aktivasyon uygular; backprop zincir kuralını tüm katmanlardan geçirir.",
+      engineer: "Bu lab’da deep learning, birden fazla hidden layer içeren `LayerConfig[]` ile temsil edilir.",
+    },
+    related: ["forward-pass", "backprop", "activation"],
+  },
+  {
+    id: "nlp",
+    title: "NLP",
+    category: "task",
+    summary: "Doğal dili modelin işleyebileceği sayısal forma dönüştürüp öğrenme yapmaktır.",
+    example: "Bir cümleyi pozitif/negatif duygu olarak sınıflandırmak.",
+    copy: {
+      beginner: "NLP, metni makinenin anlayacağı sayılara çevirip o sayılardan anlam çıkarmaya çalışır.",
+      math: "Metin önce vektöre dönüştürülür; ağ bu vektör üzerinde sınıflandırma fonksiyonu öğrenir.",
+      engineer: "Bu lab’da NLP görevi bag-of-words vektörü üretir ve saf TypeScript ağ ile eğitir.",
+    },
+    related: ["tokenization", "bag-of-words", "classification"],
+  },
+  {
+    id: "tokenization",
+    title: "Tokenization",
+    category: "data",
+    summary: "Metni kelime/parça birimlerine ayırma işlemidir.",
+    example: "'bu çok iyi' → ['bu', 'çok', 'iyi']",
+    copy: {
+      beginner: "Tokenization, cümleyi modelin bakabileceği küçük parçalara bölmektir.",
+      math: "Token listesi daha sonra sayısal vektör veya embedding dizisine çevrilir.",
+      engineer: "`tokenizeText` metni küçük harfe çevirir, noktalama temizler ve boşluklardan böler.",
+    },
+    related: ["nlp", "bag-of-words"],
+  },
+  {
+    id: "bag-of-words",
+    title: "Bag of Words",
+    category: "data",
+    summary: "Sözlükteki kelimelerin metinde var/yok bilgisini vektöre çevirir.",
+    formula: "text → [0,1,0,1,...]",
+    example: "Sözlükte 'iyi' varsa ve metinde geçiyorsa o input nöronu 1 olur.",
+    copy: {
+      beginner: "Bag-of-words, kelimeleri input nöronlarına dönüştürmenin en basit yoludur.",
+      math: "Kelime sırasını kaybeder ama sınıflandırma için hızlı ve açıklanabilir bir vektör üretir.",
+      engineer: "`encodeText` bu lab’daki sabit NLP sözlüğünü binary input vektörüne çevirir.",
+    },
+    related: ["tokenization", "nlp", "embedding"],
+  },
+  {
+    id: "embedding",
+    title: "Embedding",
+    category: "data",
+    summary: "Kelimeleri anlam ilişkisi taşıyan yoğun vektörlere çevirmektir.",
+    example: "Gerçek NLP sistemlerinde 'iyi' ve 'güzel' vektörleri birbirine yakın olabilir.",
+    copy: {
+      beginner: "Embedding, kelimelere sadece 0/1 değil, anlamı taşıyan çok boyutlu koordinatlar vermektir.",
+      math: "Embedding matrisi öğrenilebilir parametrelerden oluşur; token id vektör satırına karşılık gelir.",
+      engineer: "Bu lab’ın ilk NLP sürümü embedding kullanmaz; bag-of-words ile temel fikri görünür tutar.",
+    },
+    related: ["nlp", "bag-of-words", "deep-learning"],
   },
 ];
 

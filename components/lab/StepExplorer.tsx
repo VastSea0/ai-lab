@@ -305,6 +305,11 @@ function ConceptTermStrip({
     regression: "regresyon",
     classification: "sınıflandırma",
     normalization: "normalizasyon",
+    "deep-learning": "deep learning",
+    nlp: "NLP",
+    tokenization: "tokenization",
+    "bag-of-words": "bag-of-words",
+    embedding: "embedding",
   };
 
   return (

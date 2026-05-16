@@ -11,6 +11,7 @@ import {
   FlaskConical,
   ImageIcon,
   Maximize2,
+  MessageSquareText,
   Minus,
   MousePointerClick,
   Pause,
@@ -43,6 +44,20 @@ import {
 } from "@/lib/ml/network";
 import type { ConceptId } from "@/lib/ml/concepts";
 import { ACTIVATION_CONCEPT_IDS } from "@/lib/ml/concepts";
+import {
+  DEFAULT_NLP_CONFIG,
+  NLP_CLASS_NAMES,
+  NLP_VOCABULARY,
+  buildNlpVectorizer,
+  encodeText,
+  parseTextDataset,
+  tokenizeText,
+  vectorizeExamples,
+  vectorizeText,
+  type NlpVectorizerConfig,
+  type NlpVectorizerModel,
+  type TextExample,
+} from "@/lib/ml/nlp";
 import { TASKS, Task, TaskId } from "@/lib/ml/tasks";
 import { DatasetImport } from "@/components/lab/DatasetImport";
 import { StepExplorer } from "@/components/lab/StepExplorer";
@@ -123,11 +138,31 @@ function resizeDataTargets(data: DataPoint[], size: number) {
   }));
 }
 
+function nlpTaskWithVectorizer(task: Task, vectorizer: NlpVectorizerModel | null): Task {
+  if (task.id !== "sentiment" || !vectorizer) return task;
+  const inputSize = Math.max(1, vectorizer.vocabulary.length);
+  const outputSize = Math.max(1, vectorizer.labels.length);
+  return {
+    ...task,
+    inputSize,
+    outputSize,
+    classNames: vectorizer.labels,
+    defaultLayers: [
+      { size: inputSize },
+      { size: Math.min(48, Math.max(10, Math.ceil(inputSize * 0.65))), activation: "relu" },
+      { size: Math.min(32, Math.max(6, Math.ceil(inputSize * 0.35))), activation: "relu" },
+      { size: outputSize, activation: "sigmoid" },
+    ],
+  };
+}
+
 export function SandboxApp() {
   const [taskId, setTaskId] = useState<TaskId>("regression");
   const task = useMemo(() => TASKS.find((item) => item.id === taskId) ?? TASKS[0], [taskId]);
   const [customClassNames, setCustomClassNames] = useState<string[]>(() => task.classNames ?? []);
+  const [nlpVectorizer, setNlpVectorizer] = useState<NlpVectorizerModel | null>(null);
   const labTask = useMemo<Task>(() => {
+    if (task.id === "sentiment") return nlpTaskWithVectorizer(task, nlpVectorizer);
     if (task.outputType !== "classification") return task;
     const classNames = customClassNames.length > 0 ? customClassNames : task.classNames ?? [];
     const outputSize = Math.max(1, classNames.length, task.outputSize);
@@ -139,7 +174,7 @@ export function SandboxApp() {
         index === layers.length - 1 ? { ...layer, size: outputSize } : layer
       ),
     };
-  }, [customClassNames, task]);
+  }, [customClassNames, nlpVectorizer, task]);
   const [data, setData] = useState<DataPoint[]>(() => cloneData(task.data));
   const [model, setModel] = useState<ModelState>(() => createModelState(1327, task));
   const [learningRate, setLearningRate] = useState(task.defaultLearningRate);
@@ -179,6 +214,7 @@ export function SandboxApp() {
     setHovered(null);
     setDetailSelection(null);
     setDatasetMetadata(null);
+    setNlpVectorizer(null);
     setTaskId(nextTask.id);
     setCustomClassNames(nextTask.outputType === "classification" ? nextTask.classNames ?? [] : []);
     setData(nextData);
@@ -234,6 +270,7 @@ export function SandboxApp() {
   const resetTaskData = useCallback(() => {
     const clean = cloneData(task.data);
     setDatasetMetadata(null);
+    setNlpVectorizer(null);
     setCustomClassNames(task.outputType === "classification" ? task.classNames ?? [] : []);
     setData(clean);
     setLearningRate(task.defaultLearningRate);
@@ -301,6 +338,33 @@ export function SandboxApp() {
     [customClassNames, data]
   );
 
+  const applyNlpDataset = useCallback(
+    (examples: TextExample[], config: NlpVectorizerConfig) => {
+      const vectorizer = buildNlpVectorizer(examples, config);
+      const nextData = vectorizeExamples(examples, vectorizer);
+      const dynamicTask = nlpTaskWithVectorizer(task, vectorizer);
+      setRunning(false);
+      setNlpVectorizer(vectorizer);
+      setCustomClassNames(vectorizer.labels);
+      setData(nextData);
+      setLearningRate(0.14);
+      setSelected(null);
+      setHovered(null);
+      setDetailSelection(null);
+      setDatasetMetadata({
+        name: "NLP metin veri seti",
+        rowCount: nextData.length,
+        inputColumns: vectorizer.vocabulary,
+        targetColumns: vectorizer.labels,
+        normalized: true,
+        trainRatio: 1,
+        rejectedRows: [],
+      });
+      setModel((previous) => createModelState(previous.seed + 307, dynamicTask, nextData));
+    },
+    [task]
+  );
+
   const runEpoch = useCallback(() => {
     setModel((previous) => {
       const nextNetwork = previous.network.clone();
@@ -356,7 +420,15 @@ export function SandboxApp() {
           onRebuild={rebuildNetwork}
           onApplyPreset={(layers, nextLearningRate) => {
             setLearningRate(nextLearningRate);
-            rebuildNetwork(layers);
+            rebuildNetwork(
+              layers.map((layer, index) =>
+                index === 0
+                  ? { ...layer, size: labTask.inputSize }
+                  : index === layers.length - 1
+                    ? { ...layer, size: labTask.outputSize }
+                    : layer
+              )
+            );
           }}
           onResetWeights={resetWeights}
           onOpenConcept={openConcept}
@@ -393,11 +465,13 @@ export function SandboxApp() {
           network={model.network}
           data={data}
           metadata={datasetMetadata}
+          nlpVectorizer={nlpVectorizer}
           conceptMode={conceptMode}
           onDataChange={updateData}
           onMetadataChange={setDatasetMetadata}
           onResetData={resetTaskData}
           onAddImageExample={addImageExample}
+          onApplyNlpDataset={applyNlpDataset}
           onOpenDetail={setDetailSelection}
           onOpenConcept={openConcept}
         />
@@ -791,7 +865,9 @@ function LearningGuide({
 }) {
   const lessons = lessonsForTask(task);
   const imageCopy =
-    task.id === "digit"
+    task.id === "sentiment"
+      ? "NLP görevinde metin önce token'lara ayrılır, sonra kelime var/yok vektörüne çevrilir. Bu vektördeki her değer bir input nöronudur."
+      : task.id === "digit"
       ? "Bu görevde her piksel bir giriş nöronudur. Beyaz piksel 0, dolu piksel 1 gibi düşünülür; ağ çizgileri ve şekilleri sayı tahminine çevirir."
       : "Görüntü tanımada da aynı matematik çalışır: x değerleri piksel parlaklıkları olur, ağ bunlardan kenar, çizgi ve sınıf sinyalleri üretmeyi öğrenir.";
 
@@ -816,7 +892,12 @@ function LearningGuide({
         conceptId="backprop"
         onOpenConcept={onOpenConcept}
       />
-      <GuideItem title="4. Resim mantığı" text={imageCopy} conceptId="classification" onOpenConcept={onOpenConcept} />
+      <GuideItem
+        title={task.id === "sentiment" ? "4. NLP mantığı" : "4. Resim mantığı"}
+        text={imageCopy}
+        conceptId={task.id === "sentiment" ? "nlp" : "classification"}
+        onOpenConcept={onOpenConcept}
+      />
       <div className="rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3">
         <div className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
           Ders Akışı
@@ -1187,11 +1268,13 @@ interface InspectorPanelProps {
   network: NeuralNetwork;
   data: DataPoint[];
   metadata: DatasetMetadata | null;
+  nlpVectorizer: NlpVectorizerModel | null;
   conceptMode: ConceptMode;
   onDataChange: (data: DataPoint[]) => void;
   onMetadataChange: (metadata: DatasetMetadata | null) => void;
   onResetData: () => void;
   onAddImageExample: (inputs: number[], label: string) => void;
+  onApplyNlpDataset: (examples: TextExample[], config: NlpVectorizerConfig) => void;
   onOpenDetail: (selection: Selection) => void;
   onOpenConcept: (conceptId: ConceptId) => void;
 }
@@ -1203,11 +1286,13 @@ function InspectorPanel({
   network,
   data,
   metadata,
+  nlpVectorizer,
   conceptMode,
   onDataChange,
   onMetadataChange,
   onResetData,
   onAddImageExample,
+  onApplyNlpDataset,
   onOpenDetail,
   onOpenConcept,
 }: InspectorPanelProps) {
@@ -1259,10 +1344,12 @@ function InspectorPanel({
             network={network}
             data={data}
             metadata={metadata}
+            nlpVectorizer={nlpVectorizer}
             onDataChange={onDataChange}
             onMetadataChange={onMetadataChange}
             onResetData={onResetData}
             onAddImageExample={onAddImageExample}
+            onApplyNlpDataset={onApplyNlpDataset}
           />
         </div>
       )}
@@ -1319,7 +1406,11 @@ function TraceSummary({
         }
       />
       <ConceptChips
-        items={["loss", "forward-pass", task.outputType === "regression" ? "regression" : "classification"]}
+        items={
+          task.id === "sentiment"
+            ? ["nlp", "bag-of-words", "deep-learning", "loss"]
+            : ["loss", "forward-pass", task.outputType === "regression" ? "regression" : "classification"]
+        }
         onOpenConcept={onOpenConcept}
       />
       <ExplainBox
@@ -1629,6 +1720,11 @@ function ConceptChips({
     regression: "regresyon",
     classification: "sınıflandırma",
     normalization: "normalizasyon",
+    "deep-learning": "deep learning",
+    nlp: "NLP",
+    tokenization: "tokenization",
+    "bag-of-words": "bag-of-words",
+    embedding: "embedding",
   };
   return (
     <div className="flex flex-wrap gap-1.5">
@@ -1705,10 +1801,12 @@ interface DatasetPanelProps {
   network: NeuralNetwork;
   data: DataPoint[];
   metadata?: DatasetMetadata | null;
+  nlpVectorizer?: NlpVectorizerModel | null;
   onDataChange: (data: DataPoint[]) => void;
   onMetadataChange?: (metadata: DatasetMetadata | null) => void;
   onResetData: () => void;
   onAddImageExample?: (inputs: number[], label: string) => void;
+  onApplyNlpDataset?: (examples: TextExample[], config: NlpVectorizerConfig) => void;
 }
 
 function DatasetPanel({
@@ -1716,10 +1814,12 @@ function DatasetPanel({
   network,
   data,
   metadata,
+  nlpVectorizer,
   onDataChange,
   onMetadataChange,
   onResetData,
   onAddImageExample,
+  onApplyNlpDataset,
 }: DatasetPanelProps) {
   return (
     <div>
@@ -1752,6 +1852,16 @@ function DatasetPanel({
           onDataChange={onDataChange}
           onResetData={onResetData}
           onAddImageExample={onAddImageExample}
+        />
+      ) : task.id === "sentiment" ? (
+        <NlpDatasetPanel
+          task={task}
+          network={network}
+          data={data}
+          nlpVectorizer={nlpVectorizer}
+          onDataChange={onDataChange}
+          onApplyNlpDataset={onApplyNlpDataset}
+          onResetData={onResetData}
         />
       ) : (
         <NumericDatasetPanel
@@ -1960,6 +2070,227 @@ function DigitDatasetPanel({ task, network, data, onAddImageExample }: DatasetPa
           >
             <MiniDigit inputs={point.inputs} />
             <div className="mt-1 text-[11px] font-semibold text-[#526070]">{point.label}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NlpDatasetPanel({
+  task,
+  network,
+  data,
+  nlpVectorizer,
+  onDataChange,
+  onApplyNlpDataset,
+}: DatasetPanelProps) {
+  const [text, setText] = useState("bu çok iyi ve güzel");
+  const [label, setLabel] = useState("Pozitif");
+  const [draftDataset, setDraftDataset] = useState(
+    "text,label\nbu ürün harika ve çok kullanışlı,Pozitif\nhizmet güzel başarılı teşekkürler,Pozitif\nuygulamayı seviyorum deneyim iyi,Pozitif\nbu çok kötü ve berbat,Negatif\nsonuçtan nefret ettim çok zor,Negatif\nüzgün ve kızgın kaldım,Negatif"
+  );
+  const [config, setConfig] = useState<NlpVectorizerConfig>(DEFAULT_NLP_CONFIG);
+  const examples = useMemo(() => parseTextDataset(draftDataset), [draftDataset]);
+  const liveVectorizer = useMemo(
+    () => nlpVectorizer ?? buildNlpVectorizer(examples, config),
+    [config, examples, nlpVectorizer]
+  );
+  const vector = useMemo(
+    () => (nlpVectorizer ? vectorizeText(text, nlpVectorizer) : encodeText(text)),
+    [text, nlpVectorizer]
+  );
+  const tokens = useMemo(() => tokenizeText(text), [text]);
+  const prediction = network.predictPure(vector);
+  const labelOptions = nlpVectorizer?.labels ?? NLP_CLASS_NAMES;
+  const visibleVocabulary = nlpVectorizer?.vocabulary ?? [...NLP_VOCABULARY];
+
+  const addTextExample = () => {
+    setDraftDataset((previous) => `${previous.trim()}\n"${text.replaceAll("\"", "\"\"")}",${label}`);
+  };
+
+  const buildRealNlpDataset = () => {
+    if (examples.length === 0 || !onApplyNlpDataset) return;
+    onApplyNlpDataset(examples, config);
+  };
+
+  return (
+    <div className="mt-3 space-y-3">
+      <div className="rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3">
+        <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+          <MessageSquareText className="h-4 w-4 text-[#2563eb]" />
+          Metin Deneyi
+        </div>
+        <textarea
+          className="min-h-20 w-full resize-y rounded-md border border-[#cbd5e1] bg-white p-2 text-sm leading-5 outline-none focus:border-[#2563eb]"
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          aria-label="NLP metni"
+        />
+        <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
+          <select
+            className="h-9 rounded-md border border-[#cbd5e1] bg-white px-2 text-sm"
+            value={label}
+            onChange={(event) => setLabel(event.target.value)}
+          >
+            {labelOptions.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+          <IconButton title="Metni veri setine ekle" onClick={addTextExample}>
+            <Plus className="h-4 w-4" />
+          </IconButton>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-[#dbe3ee] bg-white p-3">
+        <div className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+          Eğitim Metinleri
+        </div>
+        <textarea
+          className="min-h-40 w-full resize-y rounded-md border border-[#cbd5e1] bg-[#fbfdff] p-2 font-mono text-[11px] leading-5 text-[#334155] outline-none focus:border-[#2563eb]"
+          value={draftDataset}
+          onChange={(event) => setDraftDataset(event.target.value)}
+          aria-label="NLP eğitim metinleri CSV"
+          spellCheck={false}
+        />
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+              Max feature
+            </span>
+            <input
+              className="mt-1 h-8 w-full rounded-md border border-[#cbd5e1] px-2 text-xs"
+              type="number"
+              min={8}
+              max={256}
+              value={config.maxFeatures}
+              onChange={(event) =>
+                setConfig((previous) => ({ ...previous, maxFeatures: Number(event.target.value) }))
+              }
+            />
+          </label>
+          <label className="block">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+              N-gram
+            </span>
+            <select
+              className="mt-1 h-8 w-full rounded-md border border-[#cbd5e1] px-2 text-xs"
+              value={config.ngramMax}
+              onChange={(event) =>
+                setConfig((previous) => ({ ...previous, ngramMax: Number(event.target.value) as 1 | 2 | 3 }))
+              }
+            >
+              <option value={1}>1</option>
+              <option value={2}>1-2</option>
+              <option value={3}>1-3</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+              Min frekans
+            </span>
+            <input
+              className="mt-1 h-8 w-full rounded-md border border-[#cbd5e1] px-2 text-xs"
+              type="number"
+              min={1}
+              max={10}
+              value={config.minFrequency}
+              onChange={(event) =>
+                setConfig((previous) => ({ ...previous, minFrequency: Number(event.target.value) }))
+              }
+            />
+          </label>
+          <div className="flex items-end gap-3 pb-1">
+            <label className="flex items-center gap-1 text-[11px] font-semibold text-[#334155]">
+              <input
+                type="checkbox"
+                checked={config.useTfIdf}
+                onChange={(event) =>
+                  setConfig((previous) => ({ ...previous, useTfIdf: event.target.checked }))
+                }
+              />
+              TF-IDF
+            </label>
+            <label className="flex items-center gap-1 text-[11px] font-semibold text-[#334155]">
+              <input
+                type="checkbox"
+                checked={config.removeStopWords}
+                onChange={(event) =>
+                  setConfig((previous) => ({ ...previous, removeStopWords: event.target.checked }))
+                }
+              />
+              stopword
+            </label>
+          </div>
+        </div>
+        <button
+          type="button"
+          className="mt-3 inline-flex h-9 w-full items-center justify-center rounded-md bg-[#2563eb] px-3 text-xs font-semibold text-white hover:bg-[#1d4ed8]"
+          onClick={buildRealNlpDataset}
+        >
+          Vocabulary oluştur ve modeli kur
+        </button>
+      </div>
+
+      <div className="rounded-md border border-[#dbe3ee] bg-white p-3">
+        <div className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+          Token → Vektör
+        </div>
+        <div className="mb-2 flex flex-wrap gap-1">
+          {tokens.length === 0 ? (
+            <span className="text-xs text-[#64748b]">Henüz token yok.</span>
+          ) : (
+            tokens.map((token, index) => (
+              <span key={`${token}-${index}`} className="rounded-md bg-[#eef4ff] px-2 py-1 text-[11px] font-semibold text-[#2563eb]">
+                {token}
+              </span>
+            ))
+          )}
+        </div>
+        <div className="mb-2 grid grid-cols-2 gap-1">
+          {visibleVocabulary.slice(0, 40).map((word, index) => (
+            <div
+              key={`${word}-${index}`}
+              className={`flex items-center justify-between rounded-md border px-2 py-1 text-[11px] ${
+                vector[index] > 0
+                  ? "border-[#2563eb] bg-[#e8f0ff] text-[#1d4ed8]"
+                  : "border-[#e2e8f0] bg-[#fbfdff] text-[#64748b]"
+              }`}
+            >
+              <span>{word}</span>
+              <span className="font-mono font-semibold">{vector[index]}</span>
+            </div>
+          ))}
+        </div>
+        <div className="rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-2 text-[11px] leading-5 text-[#526070]">
+          {examples.length} metin · {liveVectorizer.vocabulary.length} feature · sınıflar:{" "}
+          {liveVectorizer.labels.join(", ")}
+        </div>
+      </div>
+
+      <div className="rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3">
+        <div className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+          Model Çıktısı
+        </div>
+        <OutputBars task={task} values={prediction} />
+        <div className="mt-2 text-xs leading-5 text-[#526070]">
+          Bu artık dinamik vocabulary + n-gram + TF-IDF destekler. Model yeniden kurulduğunda input nöronları senin veri setindeki feature sayısına göre oluşur.
+        </div>
+      </div>
+
+      <div className="flex max-h-20 flex-wrap gap-1 overflow-y-auto">
+        {data.map((point) => (
+          <button
+            key={point.id}
+            type="button"
+            className="rounded-md border border-[#dbe3ee] px-2 py-1 text-[11px] text-[#526070] hover:border-[#ef4444] hover:text-[#b91c1c]"
+            onClick={() => onDataChange(data.filter((item) => item.id !== point.id))}
+            title="Metin örneğini sil"
+          >
+            {point.label ?? targetName(task, point.targets)}
           </button>
         ))}
       </div>

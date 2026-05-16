@@ -79,6 +79,32 @@ export const MODEL_PRESETS: ModelPreset[] = [
       { size: 4, activation: "sigmoid" },
     ],
   },
+  {
+    id: "sentiment-deep-relu",
+    taskId: "sentiment",
+    name: "Derin NLP ReLU",
+    description: "Kelime vektörlerinden pozitif/negatif sinyal çıkaran iki hidden katman.",
+    learningRate: 0.22,
+    layers: [
+      { size: 12 },
+      { size: 8, activation: "relu" },
+      { size: 6, activation: "relu" },
+      { size: 2, activation: "sigmoid" },
+    ],
+  },
+  {
+    id: "sentiment-tanh",
+    taskId: "sentiment",
+    name: "NLP Tanh Deneyi",
+    description: "Metin sınıflandırmada tanh hidden katmanlarını karşılaştırmak için.",
+    learningRate: 0.18,
+    layers: [
+      { size: 12 },
+      { size: 7, activation: "tanh" },
+      { size: 5, activation: "tanh" },
+      { size: 2, activation: "sigmoid" },
+    ],
+  },
 ];
 
 export function presetsForTask(taskId: TaskId) {

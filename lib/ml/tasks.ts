@@ -1,11 +1,13 @@
 import { DataPoint, LayerConfig } from "./network";
+import { NLP_CLASS_NAMES, NLP_VOCABULARY, textPoint } from "./nlp";
 
 export type TaskId =
   | "regression"
   | "xor"
   | "circle"
   | "spiral"
-  | "digit";
+  | "digit"
+  | "sentiment";
 
 export interface Task {
   id: TaskId;
@@ -143,6 +145,17 @@ const digitData: DataPoint[] = [
   pt("d3", DIGIT_3.map(v => v), oneHot(3, 4), "3"),
 ];
 
+// ─── 6. Mini NLP: Duygu Analizi ─────────────────────────────────────────────
+
+const sentimentData: DataPoint[] = [
+  textPoint("nlp1", "bu çok iyi ve güzel", "Pozitif"),
+  textPoint("nlp2", "harika başarılı seviyorum", "Pozitif"),
+  textPoint("nlp3", "mutlu ve güzel bir deney", "Pozitif"),
+  textPoint("nlp4", "bu kötü ve berbat", "Negatif"),
+  textPoint("nlp5", "üzgün kızgın ve zor", "Negatif"),
+  textPoint("nlp6", "nefret ediyorum berbat", "Negatif"),
+];
+
 // ─── Task Registry ──────────────────────────────────────────────────────────
 
 export const TASKS: Task[] = [
@@ -242,6 +255,27 @@ export const TASKS: Task[] = [
     data: digitData,
     classColors: ["#6366f1", "#f59e0b", "#10b981", "#ef4444"],
     classNames: ["0", "1", "2", "3"],
+  },
+  {
+    id: "sentiment",
+    name: "NLP Duygu Analizi",
+    emoji: "💬",
+    description: "Metin → pozitif/negatif",
+    explanation:
+      "Metin önce küçük bir sözlükle sayısal vektöre çevrilir. Her kelime bir input nöronu olur; ağ bu kelime sinyallerinden pozitif/negatif sınıfını öğrenmeye çalışır.",
+    inputSize: NLP_VOCABULARY.length,
+    outputSize: NLP_CLASS_NAMES.length,
+    outputType: "classification",
+    defaultLayers: [
+      { size: NLP_VOCABULARY.length },
+      { size: 8, activation: "relu" },
+      { size: 6, activation: "relu" },
+      { size: NLP_CLASS_NAMES.length, activation: "sigmoid" },
+    ],
+    defaultLearningRate: 0.22,
+    data: sentimentData,
+    classColors: ["#10b981", "#ef4444"],
+    classNames: NLP_CLASS_NAMES,
   },
 ];
 

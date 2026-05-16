@@ -1,6 +1,7 @@
 import type { DataPoint } from "./network";
 import { sanitizePointValue } from "./network";
 import type { ColumnMapping, DatasetMetadata } from "./lab-types";
+import { encodeText, nlpTarget } from "./nlp";
 import type { Task } from "./tasks";
 
 function splitCsvLine(line: string) {
@@ -271,15 +272,23 @@ export function parseDatasetWithMapping(
       return [];
     }
 
-    const inputs = Array.from({ length: task.inputSize }, (_, inputIndex) => {
-      const column = mapping.inputColumns[inputIndex];
-      const raw = parseNumber(record[column], 0);
-      const range = ranges.get(column);
-      return mapping.normalize && range ? normalizeColumn(raw, range.min, range.max) : sanitizePointValue(raw);
-    });
+    const textInputColumn = mapping.inputColumns.length === 1 ? mapping.inputColumns[0] : undefined;
+    const textInput = textInputColumn ? String(record[textInputColumn] ?? "") : "";
+    const inputs =
+      task.id === "sentiment" && textInput.trim() && Number.isNaN(Number(textInput.replace(",", ".")))
+        ? encodeText(textInput)
+        : Array.from({ length: task.inputSize }, (_, inputIndex) => {
+            const column = mapping.inputColumns[inputIndex];
+            const raw = parseNumber(record[column], 0);
+            const range = ranges.get(column);
+            return mapping.normalize && range ? normalizeColumn(raw, range.min, range.max) : sanitizePointValue(raw);
+          });
 
     const targetValues = mapping.targetColumns.map((column) => record[column]);
-    const targets = normalizeTargets(targetValues, task);
+    const targets =
+      task.id === "sentiment" && targetValues.length > 0
+        ? nlpTarget(String(targetValues[0] ?? ""))
+        : normalizeTargets(targetValues, task);
     return {
       id: `${name}-${index + 1}`,
       inputs,
@@ -303,6 +312,10 @@ export function parseDatasetWithMapping(
 }
 
 export function datasetTemplate(task: Task) {
+  if (task.id === "sentiment") {
+    return "text,label\nbu çok iyi ve güzel,Pozitif\nbu kötü ve berbat,Negatif";
+  }
+
   if (task.id === "digit") {
     const headers = [
       ...Array.from({ length: task.inputSize }, (_, index) => `p${index}`),
