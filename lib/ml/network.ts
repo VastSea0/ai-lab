@@ -309,6 +309,44 @@ export class NeuralNetwork {
     return new NeuralNetwork(layers, weights);
   }
 
+  static fromParameters(
+    layerConfigs: LayerConfig[],
+    weights: number[][][],
+    biases: number[][],
+    seed = 1327
+  ): NeuralNetwork {
+    const network = NeuralNetwork.create(layerConfigs, seed);
+    if (weights.length !== network.weights.length) {
+      throw new Error("Ağırlık katman sayısı mimari ile eşleşmiyor.");
+    }
+
+    network.weights = network.weights.map((matrix, layerIndex) => {
+      const importedMatrix = weights[layerIndex];
+      if (!importedMatrix || importedMatrix.length !== matrix.length) {
+        throw new Error(`Ağırlık matrisi L${layerIndex} giriş boyutu ile eşleşmiyor.`);
+      }
+      return matrix.map((row, fromIndex) => {
+        const importedRow = importedMatrix[fromIndex];
+        if (!importedRow || importedRow.length !== row.length) {
+          throw new Error(`Ağırlık matrisi L${layerIndex} çıkış boyutu ile eşleşmiyor.`);
+        }
+        return row.map((_, toIndex) => {
+          const value = Number(importedRow[toIndex]);
+          return Number.isFinite(value) ? value : 0;
+        });
+      });
+    });
+
+    network.layers.forEach((layer, layerIndex) => {
+      layer.neurons.forEach((neuron, neuronIndex) => {
+        const value = Number(biases[layerIndex]?.[neuronIndex] ?? 0);
+        neuron.bias = layer.kind === "input" ? 0 : Number.isFinite(value) ? value : 0;
+      });
+    });
+
+    return network;
+  }
+
   clone(): NeuralNetwork {
     return new NeuralNetwork(
       this.layers.map((layer) => layer.clone()),
