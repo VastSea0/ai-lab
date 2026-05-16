@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
 import type { Selection, TrainingPhase, TrainingTrace } from "@/lib/ml/network";
 import { formatNumber } from "@/lib/ml/network";
+import type { ConceptId } from "@/lib/ml/concepts";
 import type { ConceptMode } from "@/lib/ml/lab-types";
 import type { Task } from "@/lib/ml/tasks";
 import {
@@ -61,6 +62,7 @@ export function StepExplorer({
   conceptMode,
   onSelectTarget,
   onPhaseChange,
+  onOpenConcept,
 }: {
   task: Task;
   trace: TrainingTrace;
@@ -69,6 +71,7 @@ export function StepExplorer({
   conceptMode: ConceptMode;
   onSelectTarget: (selection: Selection | null) => void;
   onPhaseChange: (phase: TrainingPhase) => void;
+  onOpenConcept: (conceptId: ConceptId) => void;
 }) {
   const [epochIndex, setEpochIndex] = useState(0);
   const [sampleIndex, setSampleIndex] = useState(0);
@@ -240,6 +243,7 @@ export function StepExplorer({
           <div className="mt-2 rounded-md border border-[#dbe3ee] bg-white p-2 text-[11px] leading-5 text-[#526070]">
             {modeExplanation}
           </div>
+          <ConceptTermStrip phase={selectedStep.phase} onOpenConcept={onOpenConcept} />
           <div className="mt-2 space-y-1 font-mono text-[11px] text-[#334155]">
             {selectedStep.equations.map((equation) => (
               <div key={equation} className="break-words">
@@ -263,6 +267,58 @@ export function StepExplorer({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function ConceptTermStrip({
+  phase,
+  onOpenConcept,
+}: {
+  phase: CalculationPhase;
+  onOpenConcept: (conceptId: ConceptId) => void;
+}) {
+  const phaseConcepts: Record<CalculationPhase, ConceptId[]> = {
+    input: ["normalization"],
+    forward: ["forward-pass", "z", "weight", "bias", "activation"],
+    loss: ["loss"],
+    backward: ["backprop", "delta", "derivative"],
+    update: ["gradient", "learning-rate", "weight"],
+  };
+  const labels: Record<ConceptId, string> = {
+    linear: "linear",
+    sigmoid: "sigmoid",
+    tanh: "tanh",
+    relu: "ReLU",
+    weight: "w",
+    bias: "b",
+    z: "z",
+    activation: "f(z)",
+    loss: "loss",
+    gradient: "gradient",
+    derivative: "türev",
+    delta: "δ",
+    "learning-rate": "η",
+    epoch: "epoch",
+    "forward-pass": "forward",
+    backprop: "backprop",
+    regression: "regresyon",
+    classification: "sınıflandırma",
+    normalization: "normalizasyon",
+  };
+
+  return (
+    <div className="mt-2 flex flex-wrap gap-1">
+      {phaseConcepts[phase].map((conceptId) => (
+        <button
+          key={conceptId}
+          type="button"
+          className="rounded border border-[#cbd5e1] bg-white px-1.5 py-0.5 text-[10px] font-semibold text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
+          onClick={() => onOpenConcept(conceptId)}
+        >
+          {labels[conceptId]}
+        </button>
+      ))}
     </div>
   );
 }

@@ -41,9 +41,13 @@ import {
   formatNumber,
   sanitizePointValue
 } from "@/lib/ml/network";
+import type { ConceptId } from "@/lib/ml/concepts";
+import { ACTIVATION_CONCEPT_IDS } from "@/lib/ml/concepts";
 import { TASKS, Task, TaskId } from "@/lib/ml/tasks";
 import { DatasetImport } from "@/components/lab/DatasetImport";
 import { StepExplorer } from "@/components/lab/StepExplorer";
+import { ConceptBrowser, ConceptDrawer } from "@/components/lab/concepts/ConceptDrawer";
+import { useConceptDrawer } from "@/components/lab/hooks/useConceptDrawer";
 import { buildEpochTraceRecord, type EpochTraceRecord } from "@/lib/ml/trace";
 import type { ConceptMode, DatasetMetadata, VisualizationMode } from "@/lib/ml/lab-types";
 import { lessonsForTask } from "@/lib/ml/lessons";
@@ -148,6 +152,7 @@ export function SandboxApp() {
   const [selected, setSelected] = useState<Selection | null>(null);
   const [hovered, setHovered] = useState<Selection | null>(null);
   const [detailSelection, setDetailSelection] = useState<Selection | null>(null);
+  const { openConceptId, openConcept, closeConcept } = useConceptDrawer();
   const timers = useRef<number[]>([]);
 
   const clearPhaseTimers = useCallback(() => {
@@ -354,6 +359,7 @@ export function SandboxApp() {
             rebuildNetwork(layers);
           }}
           onResetWeights={resetWeights}
+          onOpenConcept={openConcept}
         />
 
         <section className="relative overflow-hidden bg-[#eef3f8]">
@@ -393,6 +399,7 @@ export function SandboxApp() {
           onResetData={resetTaskData}
           onAddImageExample={addImageExample}
           onOpenDetail={setDetailSelection}
+          onOpenConcept={openConcept}
         />
 
         <TrainingPanel
@@ -410,6 +417,7 @@ export function SandboxApp() {
           conceptMode={conceptMode}
           onSelectTarget={setSelected}
           onPhaseChange={setPhase}
+          onOpenConcept={openConcept}
           onLearningRateChange={setLearningRate}
           onStep={runEpoch}
           onToggleRun={() => {
@@ -423,7 +431,14 @@ export function SandboxApp() {
           trace={model.trace}
           learningRate={learningRate}
           conceptMode={conceptMode}
+          onOpenConcept={openConcept}
           onClose={() => setDetailSelection(null)}
+        />
+        <ConceptDrawer
+          conceptId={openConceptId}
+          conceptMode={conceptMode}
+          onOpenConcept={openConcept}
+          onClose={closeConcept}
         />
       </div>
     </main>
@@ -526,6 +541,7 @@ interface ArchitecturePanelProps {
   onRebuild: (configs: LayerConfig[]) => void;
   onApplyPreset: (configs: LayerConfig[], learningRate: number) => void;
   onResetWeights: () => void;
+  onOpenConcept: (conceptId: ConceptId) => void;
 }
 
 function ArchitecturePanel({
@@ -535,9 +551,10 @@ function ArchitecturePanel({
   onTaskChange,
   onRebuild,
   onApplyPreset,
-  onResetWeights
+  onResetWeights,
+  onOpenConcept
 }: ArchitecturePanelProps) {
-  const [tab, setTab] = useState<"task" | "layers" | "guide">("task");
+  const [tab, setTab] = useState<"task" | "layers" | "guide" | "concepts">("task");
   const configs = network.getLayerConfigs();
   const hiddenConfigs = configs.slice(1, -1);
 
@@ -562,6 +579,7 @@ function ArchitecturePanel({
             { id: "task", label: "Görev" },
             { id: "layers", label: "Mimari" },
             { id: "guide", label: "Rehber" },
+            { id: "concepts", label: "Konsept" },
           ]}
           value={tab}
           onChange={(value) => setTab(value as typeof tab)}
@@ -637,6 +655,7 @@ function ArchitecturePanel({
                     detail={activationLabel(config.activation ?? "sigmoid")}
                     count={config.size}
                     activation={config.activation ?? "sigmoid"}
+                    onOpenConcept={onOpenConcept}
                     onActivationChange={(activation) => updateActivation(layerIndex, activation)}
                     onDecrease={() => {
                       const next = [...hiddenConfigs];
@@ -684,7 +703,8 @@ function ArchitecturePanel({
           </div>
         )}
 
-        {tab === "guide" && <LearningGuide task={task} />}
+        {tab === "guide" && <LearningGuide task={task} onOpenConcept={onOpenConcept} />}
+        {tab === "concepts" && <ConceptBrowser onOpenConcept={onOpenConcept} />}
       </div>
     </aside>
   );
@@ -697,6 +717,7 @@ interface LayerRowProps {
   locked?: boolean;
   activation?: ActivationName;
   onActivationChange?: (activation: ActivationName) => void;
+  onOpenConcept?: (conceptId: ConceptId) => void;
   onDecrease?: () => void;
   onIncrease?: () => void;
   onRemove?: () => void;
@@ -709,6 +730,7 @@ function LayerRow({
   locked,
   activation,
   onActivationChange,
+  onOpenConcept,
   onDecrease,
   onIncrease,
   onRemove
@@ -738,21 +760,35 @@ function LayerRow({
         </IconButton>
       </div>
       {activation && onActivationChange && (
-        <select
-          className="mt-3 h-9 w-full rounded-md border border-[#cbd5e1] bg-white px-2 text-xs"
-          value={activation}
-          onChange={(event) => onActivationChange(event.target.value as ActivationName)}
-        >
-          <option value="sigmoid">Sigmoid</option>
-          <option value="tanh">Tanh</option>
-          <option value="relu">ReLU</option>
-        </select>
+        <div className="mt-3 grid grid-cols-[1fr_auto] gap-2">
+          <select
+            className="h-9 w-full rounded-md border border-[#cbd5e1] bg-white px-2 text-xs"
+            value={activation}
+            onChange={(event) => onActivationChange(event.target.value as ActivationName)}
+          >
+            <option value="sigmoid">Sigmoid</option>
+            <option value="tanh">Tanh</option>
+            <option value="relu">ReLU</option>
+          </select>
+          <IconButton
+            title="Aktivasyonu öğren"
+            onClick={() => onOpenConcept?.(ACTIVATION_CONCEPT_IDS[activation])}
+          >
+            <BookOpen className="h-4 w-4" />
+          </IconButton>
+        </div>
       )}
     </div>
   );
 }
 
-function LearningGuide({ task }: { task: Task }) {
+function LearningGuide({
+  task,
+  onOpenConcept,
+}: {
+  task: Task;
+  onOpenConcept: (conceptId: ConceptId) => void;
+}) {
   const lessons = lessonsForTask(task);
   const imageCopy =
     task.id === "digit"
@@ -765,16 +801,22 @@ function LearningGuide({ task }: { task: Task }) {
       <GuideItem
         title="1. Forward pass"
         text="Girdi değerleri çizgilerden akar. Her nöron önce Σ(x×w)+b hesabını yapar, sonra aktivasyon fonksiyonundan geçirir."
+        conceptId="forward-pass"
+        onOpenConcept={onOpenConcept}
       />
       <GuideItem
         title="2. Loss"
         text="Tahmin hedefe uzaksa loss büyür. Loss, ağın ne kadar yanıldığını tek bir sayıya indirir."
+        conceptId="loss"
+        onOpenConcept={onOpenConcept}
       />
       <GuideItem
         title="3. Backpropagation"
         text="Hata geriye doğru paylaşılır. Büyük katkı yapan bağlantı daha büyük gradient alır ve ağırlığı daha fazla değişir."
+        conceptId="backprop"
+        onOpenConcept={onOpenConcept}
       />
-      <GuideItem title="4. Resim mantığı" text={imageCopy} />
+      <GuideItem title="4. Resim mantığı" text={imageCopy} conceptId="classification" onOpenConcept={onOpenConcept} />
       <div className="rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3">
         <div className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
           Ders Akışı
@@ -797,10 +839,31 @@ function LearningGuide({ task }: { task: Task }) {
   );
 }
 
-function GuideItem({ title, text }: { title: string; text: string }) {
+function GuideItem({
+  title,
+  text,
+  conceptId,
+  onOpenConcept,
+}: {
+  title: string;
+  text: string;
+  conceptId?: ConceptId;
+  onOpenConcept?: (conceptId: ConceptId) => void;
+}) {
   return (
     <div className="rounded-md border border-[#dbe3ee] bg-white p-3">
-      <div className="text-xs font-semibold text-[#18202f]">{title}</div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs font-semibold text-[#18202f]">{title}</div>
+        {conceptId && onOpenConcept && (
+          <button
+            type="button"
+            className="text-[11px] font-semibold text-[#2563eb]"
+            onClick={() => onOpenConcept(conceptId)}
+          >
+            Öğren
+          </button>
+        )}
+      </div>
       <div className="mt-1 text-xs leading-5 text-[#526070]">{text}</div>
     </div>
   );
@@ -1130,6 +1193,7 @@ interface InspectorPanelProps {
   onResetData: () => void;
   onAddImageExample: (inputs: number[], label: string) => void;
   onOpenDetail: (selection: Selection) => void;
+  onOpenConcept: (conceptId: ConceptId) => void;
 }
 
 function InspectorPanel({
@@ -1145,6 +1209,7 @@ function InspectorPanel({
   onResetData,
   onAddImageExample,
   onOpenDetail,
+  onOpenConcept,
 }: InspectorPanelProps) {
   const [tab, setTab] = useState<"inspect" | "data">("inspect");
   const neuron =
@@ -1183,9 +1248,9 @@ function InspectorPanel({
               Yakın incele
             </button>
           )}
-          {neuron && <NeuronInspector neuron={neuron} conceptMode={conceptMode} trace={trace} />}
-          {edge && <EdgeInspector edge={edge} conceptMode={conceptMode} />}
-          {!neuron && !edge && <TraceSummary task={task} trace={trace} conceptMode={conceptMode} />}
+          {neuron && <NeuronInspector neuron={neuron} conceptMode={conceptMode} trace={trace} onOpenConcept={onOpenConcept} />}
+          {edge && <EdgeInspector edge={edge} conceptMode={conceptMode} onOpenConcept={onOpenConcept} />}
+          {!neuron && !edge && <TraceSummary task={task} trace={trace} conceptMode={conceptMode} onOpenConcept={onOpenConcept} />}
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -1205,7 +1270,17 @@ function InspectorPanel({
   );
 }
 
-function TraceSummary({ task, trace, conceptMode }: { task: Task; trace: TrainingTrace; conceptMode: ConceptMode }) {
+function TraceSummary({
+  task,
+  trace,
+  conceptMode,
+  onOpenConcept,
+}: {
+  task: Task;
+  trace: TrainingTrace;
+  conceptMode: ConceptMode;
+  onOpenConcept: (conceptId: ConceptId) => void;
+}) {
   const prediction = predictionName(task, trace.prediction);
   const target = targetName(task, trace.target);
   const inputPreview = trace.input
@@ -1242,6 +1317,10 @@ function TraceSummary({ task, trace, conceptMode }: { task: Task; trace: Trainin
                 `hedef = [${trace.target.map((value) => formatNumber(value, 0)).join(", ")}]`
               ]
         }
+      />
+      <ConceptChips
+        items={["loss", "forward-pass", task.outputType === "regression" ? "regression" : "classification"]}
+        onOpenConcept={onOpenConcept}
       />
       <ExplainBox
         title="Ne anlama geliyor?"
@@ -1382,10 +1461,12 @@ function NeuronInspector({
   neuron,
   conceptMode,
   trace,
+  onOpenConcept,
 }: {
   neuron: NeuronSnapshot;
   conceptMode: ConceptMode;
   trace?: TrainingTrace;
+  onOpenConcept?: (conceptId: ConceptId) => void;
 }) {
   const topIncoming = [...neuron.incoming]
     .sort((a, b) => Math.abs(b.product) - Math.abs(a.product))
@@ -1398,7 +1479,13 @@ function NeuronInspector({
         <div className="text-sm font-semibold">
           {neuron.layerKind} · L{neuron.layerIndex} N{neuron.neuronIndex}
         </div>
-        <div className="text-xs text-[#64748b]">{activationLabel(neuron.activation)}</div>
+        <button
+          type="button"
+          className="text-xs font-semibold text-[#2563eb]"
+          onClick={() => onOpenConcept?.(ACTIVATION_CONCEPT_IDS[neuron.activation])}
+        >
+          {activationLabel(neuron.activation)}
+        </button>
       </div>
       <div className="grid grid-cols-2 gap-2">
         <Stat label="Σ(x×w)+b" value={formatNumber(neuron.z)} />
@@ -1409,6 +1496,12 @@ function NeuronInspector({
         <Stat label="∂L/∂b" value={formatNumber(neuron.gradientBias)} />
       </div>
       <FormulaBox title="Nöron hesabı" lines={[neuron.formula, `a = ${neuron.activation}(Σ)`]} />
+      {onOpenConcept && (
+        <ConceptChips
+          items={["z", "weight", "bias", "activation", "derivative", "delta"]}
+          onOpenConcept={onOpenConcept}
+        />
+      )}
       <ActivationMiniChart neuron={neuron} />
       <ExplainBox
         title="Bu nöron ne yapıyor?"
@@ -1509,7 +1602,59 @@ function ActivationMiniChart({ neuron }: { neuron: NeuronSnapshot }) {
   );
 }
 
-function EdgeInspector({ edge, conceptMode }: { edge: EdgeSnapshot; conceptMode: ConceptMode }) {
+function ConceptChips({
+  items,
+  onOpenConcept,
+}: {
+  items: ConceptId[];
+  onOpenConcept: (conceptId: ConceptId) => void;
+}) {
+  const labels: Record<ConceptId, string> = {
+    linear: "linear",
+    sigmoid: "sigmoid",
+    tanh: "tanh",
+    relu: "ReLU",
+    weight: "w",
+    bias: "bias",
+    z: "z",
+    activation: "activation",
+    loss: "loss",
+    gradient: "gradient",
+    derivative: "türev",
+    delta: "δ",
+    "learning-rate": "η",
+    epoch: "epoch",
+    "forward-pass": "forward",
+    backprop: "backprop",
+    regression: "regresyon",
+    classification: "sınıflandırma",
+    normalization: "normalizasyon",
+  };
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {items.map((item) => (
+        <button
+          key={item}
+          type="button"
+          className="rounded-md border border-[#cbd5e1] bg-white px-2 py-1 text-[11px] font-semibold text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
+          onClick={() => onOpenConcept(item)}
+        >
+          {labels[item]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function EdgeInspector({
+  edge,
+  conceptMode,
+  onOpenConcept,
+}: {
+  edge: EdgeSnapshot;
+  conceptMode: ConceptMode;
+  onOpenConcept?: (conceptId: ConceptId) => void;
+}) {
   return (
     <div className="space-y-3">
       <div>
@@ -1535,6 +1680,12 @@ function EdgeInspector({ edge, conceptMode }: { edge: EdgeSnapshot; conceptMode:
           `w_yeni = ${formatNumber(edge.weightBefore)} + ${formatNumber(edge.correction)}`
         ]}
       />
+      {onOpenConcept && (
+        <ConceptChips
+          items={["weight", "gradient", "learning-rate", "delta"]}
+          onOpenConcept={onOpenConcept}
+        />
+      )}
       <ExplainBox
         title="Neden değişti?"
         text={
@@ -1980,6 +2131,7 @@ interface TrainingPanelProps {
   conceptMode: ConceptMode;
   onSelectTarget: (selection: Selection | null) => void;
   onPhaseChange: (phase: TrainingPhase) => void;
+  onOpenConcept: (conceptId: ConceptId) => void;
   onLearningRateChange: (value: number) => void;
   onStep: () => void;
   onToggleRun: () => void;
@@ -2001,6 +2153,7 @@ function TrainingPanel({
   conceptMode,
   onSelectTarget,
   onPhaseChange,
+  onOpenConcept,
   onLearningRateChange,
   onStep,
   onToggleRun,
@@ -2063,6 +2216,7 @@ function TrainingPanel({
           conceptMode={conceptMode}
           onSelectTarget={onSelectTarget}
           onPhaseChange={onPhaseChange}
+          onOpenConcept={onOpenConcept}
         />
       </div>
       <LearningRateExperiment
@@ -2201,12 +2355,14 @@ function DetailModal({
   trace,
   learningRate,
   conceptMode,
+  onOpenConcept,
   onClose,
 }: {
   selection: Selection | null;
   trace: TrainingTrace;
   learningRate: number;
   conceptMode: ConceptMode;
+  onOpenConcept: (conceptId: ConceptId) => void;
   onClose: () => void;
 }) {
   const neuron =
@@ -2241,7 +2397,12 @@ function DetailModal({
           {neuron && (
             <div className="grid grid-cols-[minmax(0,1fr)_320px] gap-4">
               <div className="space-y-4">
-                <NeuronInspector neuron={neuron} conceptMode={conceptMode} trace={trace} />
+                <NeuronInspector
+                  neuron={neuron}
+                  conceptMode={conceptMode}
+                  trace={trace}
+                  onOpenConcept={onOpenConcept}
+                />
               </div>
               <div className="space-y-3 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-4">
                 <div className="text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
@@ -2261,7 +2422,7 @@ function DetailModal({
           {edge && (
             <div className="grid grid-cols-[minmax(0,1fr)_320px] gap-4">
               <div className="space-y-4">
-                <EdgeInspector edge={edge} conceptMode={conceptMode} />
+                <EdgeInspector edge={edge} conceptMode={conceptMode} onOpenConcept={onOpenConcept} />
               </div>
               <div className="space-y-3 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-4">
                 <div className="text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
