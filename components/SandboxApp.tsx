@@ -319,6 +319,11 @@ export function SandboxApp() {
     return () => window.clearInterval(interval);
   }, [running, runEpoch]);
 
+  const handleCanvasSelect = useCallback((selection: Selection | null) => {
+    setSelected(selection);
+    if (selection?.type === "neuron") setFocusMode(true);
+  }, []);
+
   const activeSelection = hovered ?? selected;
   const accuracy = labTask.outputType === "classification" ? model.network.evaluateAccuracy(data) : null;
 
@@ -360,9 +365,18 @@ export function SandboxApp() {
             focusMode={focusMode}
             selected={selected}
             hovered={hovered}
-            onSelect={setSelected}
+            onSelect={handleCanvasSelect}
             onHover={setHovered}
             onOpenDetail={setDetailSelection}
+          />
+          <CanvasFocusPanel
+            selection={selected}
+            trace={model.trace}
+            onOpenDetail={setDetailSelection}
+            onClose={() => {
+              setSelected(null);
+              setFocusMode(false);
+            }}
           />
         </section>
 
@@ -852,10 +866,11 @@ function NetworkCanvas({
     [trace.edges]
   );
   const activeSelection = hovered ?? selected;
+  const viewSelection = focusMode ? selected ?? hovered : activeSelection;
   const focusedViewBox = useMemo(() => {
-    if (!focusMode || !activeSelection) return `0 0 ${width} ${height}`;
-    if (activeSelection.type === "neuron") {
-      const neuron = network.layers[activeSelection.layerIndex]?.neurons[activeSelection.neuronIndex];
+    if (!focusMode || !viewSelection) return `0 0 ${width} ${height}`;
+    if (viewSelection.type === "neuron") {
+      const neuron = network.layers[viewSelection.layerIndex]?.neurons[viewSelection.neuronIndex];
       const pos = neuron ? positions.get(neuron.id) : undefined;
       if (!pos) return `0 0 ${width} ${height}`;
       const viewWidth = 360;
@@ -865,8 +880,8 @@ function NetworkCanvas({
         Math.min(height - viewHeight, pos.y - viewHeight / 2)
       )} ${viewWidth} ${viewHeight}`;
     }
-    const from = network.layers[activeSelection.fromLayerIndex]?.neurons[activeSelection.fromNeuronIndex];
-    const to = network.layers[activeSelection.toLayerIndex]?.neurons[activeSelection.toNeuronIndex];
+    const from = network.layers[viewSelection.fromLayerIndex]?.neurons[viewSelection.fromNeuronIndex];
+    const to = network.layers[viewSelection.toLayerIndex]?.neurons[viewSelection.toNeuronIndex];
     const fromPos = from ? positions.get(from.id) : undefined;
     const toPos = to ? positions.get(to.id) : undefined;
     if (!fromPos || !toPos) return `0 0 ${width} ${height}`;
@@ -878,7 +893,7 @@ function NetworkCanvas({
       0,
       Math.min(height - viewHeight, midY - viewHeight / 2)
     )} ${viewWidth} ${viewHeight}`;
-  }, [activeSelection, focusMode, network.layers, positions]);
+  }, [focusMode, network.layers, positions, viewSelection]);
 
   return (
     <svg
@@ -932,7 +947,11 @@ function NetworkCanvas({
                 toNeuronIndex: toIndex
               };
               const traceEdge = edgeTrace.get(id);
-              const active = selected?.id === id || hovered?.id === id;
+              const activeNeuronId =
+                activeSelection?.type === "neuron" ? activeSelection.id : null;
+              const connectedToActiveNeuron =
+                activeNeuronId !== null && (from.id === activeNeuronId || to.id === activeNeuronId);
+              const active = selected?.id === id || hovered?.id === id || connectedToActiveNeuron;
               const metric =
                 visualizationMode === "weights"
                   ? weight
@@ -966,7 +985,7 @@ function NetworkCanvas({
                     y2={toPos.y}
                     stroke={stroke}
                     strokeWidth={widthByWeight}
-                    strokeOpacity={active ? 0.75 : 0.16 + metricMagnitude * 0.38}
+                    strokeOpacity={active ? 0.82 : 0.12 + metricMagnitude * 0.34}
                     strokeLinecap="round"
                   />
                   {phase === "forward" && (
@@ -1164,7 +1183,7 @@ function InspectorPanel({
               Yakın incele
             </button>
           )}
-          {neuron && <NeuronInspector neuron={neuron} conceptMode={conceptMode} />}
+          {neuron && <NeuronInspector neuron={neuron} conceptMode={conceptMode} trace={trace} />}
           {edge && <EdgeInspector edge={edge} conceptMode={conceptMode} />}
           {!neuron && !edge && <TraceSummary task={task} trace={trace} conceptMode={conceptMode} />}
         </div>
@@ -1238,10 +1257,140 @@ function TraceSummary({ task, trace, conceptMode }: { task: Task; trace: Trainin
   );
 }
 
-function NeuronInspector({ neuron, conceptMode }: { neuron: NeuronSnapshot; conceptMode: ConceptMode }) {
+interface OutgoingSignal {
+  edge: EdgeSnapshot;
+  toNeuron?: NeuronSnapshot;
+}
+
+function outgoingSignals(trace: TrainingTrace, neuron: NeuronSnapshot): OutgoingSignal[] {
+  const neurons = new Map(trace.neurons.map((item) => [item.id, item]));
+  return trace.edges
+    .filter((edge) => edge.fromNeuronId === neuron.id)
+    .map((edge) => ({ edge, toNeuron: neurons.get(edge.toNeuronId) }))
+    .sort((a, b) => Math.abs(b.edge.contribution) - Math.abs(a.edge.contribution));
+}
+
+function CanvasFocusPanel({
+  selection,
+  trace,
+  onOpenDetail,
+  onClose,
+}: {
+  selection: Selection | null;
+  trace: TrainingTrace;
+  onOpenDetail: (selection: Selection) => void;
+  onClose: () => void;
+}) {
+  const neuron =
+    selection?.type === "neuron" ? trace.neurons.find((item) => item.id === selection.id) ?? null : null;
+  if (!selection || !neuron) return null;
+  const outgoing = outgoingSignals(trace, neuron).slice(0, 5);
+  const incoming = [...neuron.incoming].sort((a, b) => Math.abs(b.product) - Math.abs(a.product)).slice(0, 4);
+
+  return (
+    <div className="absolute left-4 top-4 z-20 w-[360px] rounded-lg border border-[#cbd5e1] bg-white/95 p-4 shadow-xl backdrop-blur">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-[#18202f]">
+            Odak: L{neuron.layerIndex} N{neuron.neuronIndex}
+          </div>
+          <div className="mt-0.5 text-xs text-[#64748b]">{activationLabel(neuron.activation)}</div>
+        </div>
+        <button
+          type="button"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[#cbd5e1] text-[#334155] hover:border-[#ef4444] hover:text-[#b91c1c]"
+          onClick={onClose}
+          aria-label="Odak panelini kapat"
+        >
+          ×
+        </button>
+      </div>
+
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <Stat label="z toplam" value={formatNumber(neuron.z, 4)} />
+        <Stat label="a çıktı" value={formatNumber(neuron.value, 4)} />
+        <Stat label="δ hata" value={formatNumber(neuron.delta, 4)} />
+      </div>
+
+      <div className="mt-3 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+          Bu nöronun hesabı
+        </div>
+        <div className="mt-2 space-y-1 font-mono text-[11px] leading-5 text-[#334155]">
+          <div className="break-words">{neuron.formula}</div>
+          <div>a = {neuron.activation}(z) = {formatNumber(neuron.value, 6)}</div>
+        </div>
+      </div>
+
+      {incoming.length > 0 && (
+        <div className="mt-3 rounded-md border border-[#dbe3ee] bg-white">
+          <div className="border-b border-[#edf2f7] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+            En büyük gelen terimler
+          </div>
+          {incoming.map((item) => (
+            <div key={`${item.fromNeuronId}-${neuron.id}`} className="grid grid-cols-[1fr_auto] gap-2 px-3 py-1.5 text-[11px]">
+              <span className="font-medium text-[#334155]">{item.fromNeuronId}</span>
+              <span className="font-mono text-[#64748b]">
+                {formatNumber(item.inputValue, 3)}×{formatNumber(item.weight, 3)}={formatNumber(item.product, 3)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-3 rounded-md border border-[#dbe3ee] bg-white">
+        <div className="border-b border-[#edf2f7] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+          Sonraki katmana gönderilen sinyal
+        </div>
+        {outgoing.length === 0 ? (
+          <div className="px-3 py-2 text-xs leading-5 text-[#526070]">
+            Bu output nöronu; sinyal artık loss hesabına gider.
+          </div>
+        ) : (
+          outgoing.map(({ edge, toNeuron }) => (
+            <div key={edge.id} className="px-3 py-2 text-[11px] leading-5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-[#334155]">
+                  → L{edge.toLayerIndex} N{edge.toNeuronIndex}
+                </span>
+                <span className="font-mono text-[#64748b]">
+                  a×w={formatNumber(edge.contribution, 4)}
+                </span>
+              </div>
+              <div className="font-mono text-[#64748b]">
+                {formatNumber(neuron.value, 4)} × {formatNumber(edge.weightBefore, 4)}
+                {toNeuron ? ` · hedef nöron z=${formatNumber(toNeuron.z, 4)}` : ""}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <button
+        type="button"
+        className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-[#2563eb] px-3 text-xs font-semibold text-white hover:bg-[#1d4ed8]"
+        onClick={() => onOpenDetail(selection)}
+      >
+        <Maximize2 className="h-4 w-4" />
+        Tam hesap penceresini aç
+      </button>
+    </div>
+  );
+}
+
+function NeuronInspector({
+  neuron,
+  conceptMode,
+  trace,
+}: {
+  neuron: NeuronSnapshot;
+  conceptMode: ConceptMode;
+  trace?: TrainingTrace;
+}) {
   const topIncoming = [...neuron.incoming]
     .sort((a, b) => Math.abs(b.product) - Math.abs(a.product))
     .slice(0, 6);
+  const topOutgoing = trace ? outgoingSignals(trace, neuron).slice(0, 6) : [];
 
   return (
     <div className="space-y-3">
@@ -1287,6 +1436,33 @@ function NeuronInspector({ neuron, conceptMode }: { neuron: NeuronSnapshot; conc
                   {formatNumber(item.inputValue, 3)} × {formatNumber(item.weight, 3)} ={" "}
                   {formatNumber(item.product, 3)}
                 </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {topOutgoing.length > 0 && (
+        <div className="rounded-md border border-[#dbe3ee]">
+          <div className="border-b border-[#e2e8f0] px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+            Sonraki katmana giden sinyal
+          </div>
+          <div className="divide-y divide-[#edf2f7]">
+            {topOutgoing.map(({ edge, toNeuron }) => (
+              <div key={edge.id} className="px-3 py-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">
+                    L{edge.toLayerIndex} N{edge.toNeuronIndex}
+                  </span>
+                  <span className="font-mono text-[#64748b]">
+                    {formatNumber(neuron.value, 3)} × {formatNumber(edge.weightBefore, 3)} ={" "}
+                    {formatNumber(edge.contribution, 3)}
+                  </span>
+                </div>
+                {toNeuron && (
+                  <div className="mt-1 text-[11px] text-[#64748b]">
+                    Bu katkı hedef nöronun z toplamına eklenir; hedef z={formatNumber(toNeuron.z, 4)}.
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -1969,7 +2145,9 @@ function LearningRateExperiment({
 }) {
   const rates = useMemo(() => {
     const candidates = [currentRate * 0.25, currentRate * 0.5, currentRate, currentRate * 1.5, currentRate * 2];
-    return candidates.map((rate) => Math.max(0.005, Math.min(0.8, Number(rate.toFixed(3)))));
+    return Array.from(
+      new Set(candidates.map((rate) => Math.max(0.005, Math.min(0.8, Number(rate.toFixed(3))))))
+    );
   }, [currentRate]);
   const trials = useMemo(() => simulateLearningRates(network, data, rates), [network, data, rates]);
   const best = trials.reduce((winner, trial) => (trial.lossAfter < winner.lossAfter ? trial : winner), trials[0]);
@@ -1982,11 +2160,11 @@ function LearningRateExperiment({
         Model kopyalanır, 1 epoch simüle edilir; gerçek ağırlıklar değişmez.
       </div>
       <div className="mt-2 space-y-2">
-        {trials.map((trial) => {
+        {trials.map((trial, index) => {
           const good = trial.delta < 0;
           return (
             <button
-              key={trial.learningRate}
+              key={`${trial.learningRate}-${index}`}
               type="button"
               className={`block w-full rounded-md border p-2 text-left ${
                 best?.learningRate === trial.learningRate
@@ -2063,7 +2241,7 @@ function DetailModal({
           {neuron && (
             <div className="grid grid-cols-[minmax(0,1fr)_320px] gap-4">
               <div className="space-y-4">
-                <NeuronInspector neuron={neuron} conceptMode={conceptMode} />
+                <NeuronInspector neuron={neuron} conceptMode={conceptMode} trace={trace} />
               </div>
               <div className="space-y-3 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-4">
                 <div className="text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
