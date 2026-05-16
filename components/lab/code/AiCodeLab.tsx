@@ -37,8 +37,10 @@ const difficultyClass: Record<AiCodeLabChallenge["difficulty"], string> = {
 
 export function AiCodeLab({
   onApplyResult,
+  applyLabel = "Ağa Aktar",
 }: {
   onApplyResult: (challenge: AiCodeLabChallenge, result: PythonLabResult) => void;
+  applyLabel?: string;
 }) {
   const [track, setTrack] = useState<CodeLabTrack>("core-ml");
   const visibleChallenges = useMemo(
@@ -205,7 +207,7 @@ export function AiCodeLab({
             }}
           >
             <UploadCloud className="h-4 w-4" />
-            Ağa Aktar
+            {applyLabel}
           </button>
         </div>
       </div>
