@@ -4,6 +4,7 @@ import { line, scaleLinear } from "d3";
 import {
   Activity,
   BarChart3,
+  Box,
   BrainCircuit,
   BookOpen,
   Database,
@@ -60,6 +61,7 @@ import {
 } from "@/lib/ml/nlp";
 import { TASKS, Task, TaskId } from "@/lib/ml/tasks";
 import { DatasetImport } from "@/components/lab/DatasetImport";
+import { ModelSurface3D } from "@/components/lab/canvas/ModelSurface3D";
 import { StepExplorer } from "@/components/lab/StepExplorer";
 import { ConceptBrowser, ConceptDrawer } from "@/components/lab/concepts/ConceptDrawer";
 import { useConceptDrawer } from "@/components/lab/hooks/useConceptDrawer";
@@ -156,6 +158,12 @@ function nlpTaskWithVectorizer(task: Task, vectorizer: NlpVectorizerModel | null
   };
 }
 
+function initialCanvasView(): "network" | "surface3d" {
+  if (typeof window === "undefined") return "network";
+  const params = new URLSearchParams(window.location.search);
+  return window.location.hash === "#3d" || params.get("view") === "3d" ? "surface3d" : "network";
+}
+
 export function SandboxApp() {
   const [taskId, setTaskId] = useState<TaskId>("regression");
   const task = useMemo(() => TASKS.find((item) => item.id === taskId) ?? TASKS[0], [taskId]);
@@ -181,6 +189,7 @@ export function SandboxApp() {
   const [running, setRunning] = useState(false);
   const [phase, setPhase] = useState<TrainingPhase>("idle");
   const [focusMode, setFocusMode] = useState(false);
+  const [canvasView, setCanvasView] = useState<"network" | "surface3d">(initialCanvasView);
   const [conceptMode, setConceptMode] = useState<ConceptMode>("beginner");
   const [visualizationMode, setVisualizationMode] = useState<VisualizationMode>("weights");
   const [datasetMetadata, setDatasetMetadata] = useState<DatasetMetadata | null>(null);
@@ -205,6 +214,12 @@ export function SandboxApp() {
   }, [clearPhaseTimers]);
 
   useEffect(() => () => clearPhaseTimers(), [clearPhaseTimers]);
+
+  useEffect(() => {
+    if (initialCanvasView() !== "surface3d") return undefined;
+    const frame = window.requestAnimationFrame(() => setCanvasView("surface3d"));
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
 
   const switchTask = useCallback((nextTaskId: TaskId) => {
     const nextTask = TASKS.find((item) => item.id === nextTaskId) ?? TASKS[0];
@@ -435,27 +450,55 @@ export function SandboxApp() {
         />
 
         <section className="relative overflow-hidden bg-[#eef3f8]">
-          <NetworkCanvas
-            network={model.network}
-            trace={model.trace}
-            phase={phase}
-            visualizationMode={visualizationMode}
-            focusMode={focusMode}
-            selected={selected}
-            hovered={hovered}
-            onSelect={handleCanvasSelect}
-            onHover={setHovered}
-            onOpenDetail={setDetailSelection}
-          />
-          <CanvasFocusPanel
-            selection={selected}
-            trace={model.trace}
-            onOpenDetail={setDetailSelection}
-            onClose={() => {
-              setSelected(null);
-              setFocusMode(false);
-            }}
-          />
+          {canvasView === "network" ? (
+            <>
+              <NetworkCanvas
+                network={model.network}
+                trace={model.trace}
+                phase={phase}
+                visualizationMode={visualizationMode}
+                focusMode={focusMode}
+                selected={selected}
+                hovered={hovered}
+                onSelect={handleCanvasSelect}
+                onHover={setHovered}
+                onOpenDetail={setDetailSelection}
+              />
+              <CanvasFocusPanel
+                selection={selected}
+                trace={model.trace}
+                onOpenDetail={setDetailSelection}
+                onClose={() => {
+                  setSelected(null);
+                  setFocusMode(false);
+                }}
+              />
+            </>
+          ) : (
+            <ModelSurface3D task={labTask} network={model.network} data={data} />
+          )}
+          <div className="absolute right-5 top-5 z-20 flex rounded-md border border-[#cbd5e1] bg-white/90 p-1 shadow-sm backdrop-blur">
+            <button
+              type="button"
+              className={`inline-flex h-8 items-center gap-2 rounded px-3 text-xs font-semibold ${
+                canvasView === "network" ? "bg-[#2563eb] text-white" : "text-[#334155] hover:bg-[#eef4ff]"
+              }`}
+              onClick={() => setCanvasView("network")}
+            >
+              <BrainCircuit className="h-4 w-4" />
+              Ağ
+            </button>
+            <button
+              type="button"
+              className={`inline-flex h-8 items-center gap-2 rounded px-3 text-xs font-semibold ${
+                canvasView === "surface3d" ? "bg-[#2563eb] text-white" : "text-[#334155] hover:bg-[#eef4ff]"
+              }`}
+              onClick={() => setCanvasView("surface3d")}
+            >
+              <Box className="h-4 w-4" />
+              3D
+            </button>
+          </div>
         </section>
 
         <InspectorPanel
