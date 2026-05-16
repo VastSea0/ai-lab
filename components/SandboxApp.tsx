@@ -104,9 +104,38 @@ function cloneData(data: DataPoint[]) {
   }));
 }
 
+function oneHotTarget(index: number, size: number) {
+  return Array.from({ length: size }, (_, itemIndex) => (itemIndex === index ? 1 : 0));
+}
+
+function resizeTargets(targets: number[], size: number) {
+  return Array.from({ length: size }, (_, index) => targets[index] ?? 0);
+}
+
+function resizeDataTargets(data: DataPoint[], size: number) {
+  return data.map((point) => ({
+    ...point,
+    targets: resizeTargets(point.targets, size),
+  }));
+}
+
 export function SandboxApp() {
   const [taskId, setTaskId] = useState<TaskId>("regression");
   const task = useMemo(() => TASKS.find((item) => item.id === taskId) ?? TASKS[0], [taskId]);
+  const [customClassNames, setCustomClassNames] = useState<string[]>(() => task.classNames ?? []);
+  const labTask = useMemo<Task>(() => {
+    if (task.outputType !== "classification") return task;
+    const classNames = customClassNames.length > 0 ? customClassNames : task.classNames ?? [];
+    const outputSize = Math.max(1, classNames.length, task.outputSize);
+    return {
+      ...task,
+      outputSize,
+      classNames,
+      defaultLayers: task.defaultLayers.map((layer, index, layers) =>
+        index === layers.length - 1 ? { ...layer, size: outputSize } : layer
+      ),
+    };
+  }, [customClassNames, task]);
   const [data, setData] = useState<DataPoint[]>(() => cloneData(task.data));
   const [model, setModel] = useState<ModelState>(() => createModelState(1327, task));
   const [learningRate, setLearningRate] = useState(task.defaultLearningRate);
@@ -146,6 +175,7 @@ export function SandboxApp() {
     setDetailSelection(null);
     setDatasetMetadata(null);
     setTaskId(nextTask.id);
+    setCustomClassNames(nextTask.outputType === "classification" ? nextTask.classNames ?? [] : []);
     setData(nextData);
     setLearningRate(nextTask.defaultLearningRate);
     setModel((previous) => createModelState(previous.seed + 131, nextTask, nextData));
@@ -197,15 +227,80 @@ export function SandboxApp() {
   );
 
   const resetTaskData = useCallback(() => {
+    const clean = cloneData(task.data);
     setDatasetMetadata(null);
-    updateData(cloneData(task.data));
-  }, [task.data, updateData]);
+    setCustomClassNames(task.outputType === "classification" ? task.classNames ?? [] : []);
+    setData(clean);
+    setLearningRate(task.defaultLearningRate);
+    setRunning(false);
+    setSelected(null);
+    setHovered(null);
+    setDetailSelection(null);
+    setModel((previous) => createModelState(previous.seed + 89, task, clean));
+  }, [task]);
+
+  const addImageExample = useCallback(
+    (inputs: number[], labelName: string) => {
+      const cleanLabel = labelName.trim() || `Sınıf ${customClassNames.length + 1}`;
+      const existingIndex = customClassNames.findIndex(
+        (name) => name.toLocaleLowerCase("tr") === cleanLabel.toLocaleLowerCase("tr")
+      );
+      const nextClassNames =
+        existingIndex >= 0 ? customClassNames : [...customClassNames, cleanLabel];
+      const labelIndex = existingIndex >= 0 ? existingIndex : nextClassNames.length - 1;
+      const outputSize = nextClassNames.length;
+      const nextPoint: DataPoint = {
+        id: `img${Date.now()}`,
+        inputs: [...inputs],
+        targets: oneHotTarget(labelIndex, outputSize),
+        label: cleanLabel,
+      };
+      const nextData = resizeDataTargets([...data, nextPoint], outputSize);
+
+      setRunning(false);
+      setCustomClassNames(nextClassNames);
+      setData(nextData);
+      setDatasetMetadata({
+        name: "Çizim veri seti",
+        rowCount: nextData.length,
+        inputColumns: Array.from({ length: inputs.length }, (_, index) => `pixel${index}`),
+        targetColumns: nextClassNames,
+        normalized: true,
+        trainRatio: 1,
+        rejectedRows: [],
+      });
+      setModel((previous) => {
+        const currentOutputSize = previous.network.getLayerSizes().at(-1) ?? outputSize;
+        const seed = currentOutputSize === outputSize ? previous.seed : previous.seed + 211;
+        const network =
+          currentOutputSize === outputSize
+            ? previous.network.clone()
+            : NeuralNetwork.create(
+                previous.network.getLayerConfigs().map((config, index, configs) =>
+                  index === configs.length - 1
+                    ? { ...config, size: outputSize, activation: config.activation ?? "sigmoid" }
+                    : { ...config }
+                ),
+                seed
+              );
+        return {
+          network,
+          trace: firstTrace(network, nextData),
+          lossHistory: [network.evaluateLoss(nextData)],
+          epoch: 0,
+          seed,
+          history: [],
+        };
+      });
+    },
+    [customClassNames, data]
+  );
 
   const runEpoch = useCallback(() => {
     setModel((previous) => {
       const nextNetwork = previous.network.clone();
       const result = nextNetwork.trainEpochDetailed(data, learningRate);
-      const entry = buildEpochTraceRecord(previous.epoch + 1, result, task, data, learningRate);
+      const entry = buildEpochTraceRecord(previous.epoch + 1, result, labTask, data, learningRate);
       return {
         ...previous,
         network: nextNetwork,
@@ -216,7 +311,7 @@ export function SandboxApp() {
       };
     });
     playPhaseAnimation();
-  }, [data, learningRate, playPhaseAnimation, task]);
+  }, [data, labTask, learningRate, playPhaseAnimation]);
 
   useEffect(() => {
     if (!running) return undefined;
@@ -225,13 +320,13 @@ export function SandboxApp() {
   }, [running, runEpoch]);
 
   const activeSelection = hovered ?? selected;
-  const accuracy = task.outputType === "classification" ? model.network.evaluateAccuracy(data) : null;
+  const accuracy = labTask.outputType === "classification" ? model.network.evaluateAccuracy(data) : null;
 
   return (
     <main className="h-screen min-h-[720px] min-w-[1280px] overflow-hidden bg-[#f5f7fb] text-[#18202f]">
       <div className="grid h-full grid-cols-[320px_minmax(0,1fr)_380px] grid-rows-[60px_minmax(0,1fr)_224px] gap-px bg-[#d7dde8]">
         <AppHeader
-          task={task}
+          task={labTask}
           epoch={model.epoch}
           loss={model.lossHistory.at(-1) ?? 0}
           accuracy={accuracy}
@@ -244,7 +339,7 @@ export function SandboxApp() {
         />
 
         <ArchitecturePanel
-          task={task}
+          task={labTask}
           taskId={taskId}
           network={model.network}
           onTaskChange={switchTask}
@@ -272,7 +367,7 @@ export function SandboxApp() {
         </section>
 
         <InspectorPanel
-          task={task}
+          task={labTask}
           selection={activeSelection}
           trace={model.trace}
           network={model.network}
@@ -282,11 +377,12 @@ export function SandboxApp() {
           onDataChange={updateData}
           onMetadataChange={setDatasetMetadata}
           onResetData={resetTaskData}
+          onAddImageExample={addImageExample}
           onOpenDetail={setDetailSelection}
         />
 
         <TrainingPanel
-          task={task}
+          task={labTask}
           epoch={model.epoch}
           history={model.history}
           lossHistory={model.lossHistory}
@@ -1013,6 +1109,7 @@ interface InspectorPanelProps {
   onDataChange: (data: DataPoint[]) => void;
   onMetadataChange: (metadata: DatasetMetadata | null) => void;
   onResetData: () => void;
+  onAddImageExample: (inputs: number[], label: string) => void;
   onOpenDetail: (selection: Selection) => void;
 }
 
@@ -1027,6 +1124,7 @@ function InspectorPanel({
   onDataChange,
   onMetadataChange,
   onResetData,
+  onAddImageExample,
   onOpenDetail,
 }: InspectorPanelProps) {
   const [tab, setTab] = useState<"inspect" | "data">("inspect");
@@ -1080,6 +1178,7 @@ function InspectorPanel({
             onDataChange={onDataChange}
             onMetadataChange={onMetadataChange}
             onResetData={onResetData}
+            onAddImageExample={onAddImageExample}
           />
         </div>
       )}
@@ -1282,9 +1381,19 @@ interface DatasetPanelProps {
   onDataChange: (data: DataPoint[]) => void;
   onMetadataChange?: (metadata: DatasetMetadata | null) => void;
   onResetData: () => void;
+  onAddImageExample?: (inputs: number[], label: string) => void;
 }
 
-function DatasetPanel({ task, network, data, metadata, onDataChange, onMetadataChange, onResetData }: DatasetPanelProps) {
+function DatasetPanel({
+  task,
+  network,
+  data,
+  metadata,
+  onDataChange,
+  onMetadataChange,
+  onResetData,
+  onAddImageExample,
+}: DatasetPanelProps) {
   return (
     <div>
       <PanelTitle
@@ -1315,6 +1424,7 @@ function DatasetPanel({ task, network, data, metadata, onDataChange, onMetadataC
           data={data}
           onDataChange={onDataChange}
           onResetData={onResetData}
+          onAddImageExample={onAddImageExample}
         />
       ) : (
         <NumericDatasetPanel
@@ -1401,33 +1511,32 @@ function NumericDatasetPanel({ task, network, data, onDataChange }: DatasetPanel
   );
 }
 
-function DigitDatasetPanel({ task, network, data, onDataChange }: DatasetPanelProps) {
+function DigitDatasetPanel({ task, network, data, onAddImageExample }: DatasetPanelProps) {
   const [pixels, setPixels] = useState<number[]>(() => data[0]?.inputs ?? Array(25).fill(0));
-  const [label, setLabel] = useState(0);
+  const [labelText, setLabelText] = useState(task.classNames?.[0] ?? "0");
+  const [brushValue, setBrushValue] = useState<0 | 1>(1);
+  const [painting, setPainting] = useState(false);
   const prediction = network.predictPure(pixels);
+  const labels = task.classNames ?? [];
 
-  const togglePixel = (index: number) => {
+  const paintPixel = (index: number, value = brushValue) => {
     setPixels((previous) =>
-      previous.map((value, itemIndex) => (itemIndex === index ? (value > 0 ? 0 : 1) : value))
+      previous.map((pixel, itemIndex) => (itemIndex === index ? value : pixel))
     );
   };
 
   const addImage = () => {
-    onDataChange([
-      ...data,
-      {
-        id: `img${Date.now()}`,
-        inputs: [...pixels],
-        targets: Array.from({ length: task.outputSize }, (_, index) => (index === label ? 1 : 0)),
-        label: task.classNames?.[label] ?? String(label)
-      }
-    ]);
+    onAddImageExample?.(pixels, labelText);
   };
 
   return (
     <div className="mt-3 grid grid-cols-[122px_1fr] gap-3">
       <div>
-        <div className="grid h-[122px] w-[122px] grid-cols-5 grid-rows-5 gap-1 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-2">
+        <div
+          className="grid h-[122px] w-[122px] touch-none grid-cols-5 grid-rows-5 gap-1 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-2"
+          onMouseLeave={() => setPainting(false)}
+          onMouseUp={() => setPainting(false)}
+        >
           {pixels.map((value, index) => (
             <button
               key={index}
@@ -1435,31 +1544,82 @@ function DigitDatasetPanel({ task, network, data, onDataChange }: DatasetPanelPr
               aria-label={`Piksel ${index + 1}`}
               className="rounded-[3px] border border-[#cbd5e1]"
               style={{ backgroundColor: `rgba(24, 32, 47, ${0.08 + value * 0.86})` }}
-              onClick={() => togglePixel(index)}
+              onMouseDown={() => {
+                setPainting(true);
+                paintPixel(index);
+              }}
+              onMouseEnter={() => {
+                if (painting) paintPixel(index);
+              }}
+              onClick={() => paintPixel(index, value > 0 ? 0 : 1)}
             />
           ))}
         </div>
-        <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
-          <select
-            className="h-9 rounded-md border border-[#cbd5e1] bg-white px-2 text-sm"
-            value={label}
-            onChange={(event) => setLabel(Number(event.target.value))}
+        <div className="mt-2 grid grid-cols-3 gap-1">
+          <button
+            type="button"
+            className={`h-8 rounded-md border text-[11px] font-semibold ${
+              brushValue === 1 ? "border-[#2563eb] bg-[#e8f0ff] text-[#2563eb]" : "border-[#cbd5e1] text-[#334155]"
+            }`}
+            onClick={() => setBrushValue(1)}
           >
-            {task.classNames?.map((name, index) => (
-              <option key={name} value={index}>
+            Çiz
+          </button>
+          <button
+            type="button"
+            className={`h-8 rounded-md border text-[11px] font-semibold ${
+              brushValue === 0 ? "border-[#2563eb] bg-[#e8f0ff] text-[#2563eb]" : "border-[#cbd5e1] text-[#334155]"
+            }`}
+            onClick={() => setBrushValue(0)}
+          >
+            Sil
+          </button>
+          <button
+            type="button"
+            className="h-8 rounded-md border border-[#cbd5e1] text-[11px] font-semibold text-[#334155]"
+            onClick={() => setPixels(Array(25).fill(0))}
+          >
+            Temizle
+          </button>
+        </div>
+        <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
+          <input
+            className="h-9 min-w-0 rounded-md border border-[#cbd5e1] bg-white px-2 text-sm"
+            value={labelText}
+            placeholder="örn. gülen yüz"
+            onChange={(event) => setLabelText(event.target.value)}
+            aria-label="Çizim etiketi"
+            list="image-label-options"
+          />
+          <datalist id="image-label-options">
+            {labels.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+          <IconButton title="Çizimi veri setine ekle" onClick={addImage}>
+            <Plus className="h-4 w-4" />
+          </IconButton>
+        </div>
+        {labels.length > 0 && (
+          <select
+            className="mt-2 h-8 w-full rounded-md border border-[#cbd5e1] bg-white px-2 text-xs"
+            value={labels.includes(labelText) ? labelText : ""}
+            onChange={(event) => setLabelText(event.target.value)}
+            aria-label="Mevcut etiketlerden seç"
+          >
+            <option value="">Yeni etiket</option>
+            {labels.map((name) => (
+              <option key={name} value={name}>
                 {name}
               </option>
             ))}
           </select>
-          <IconButton title="Resmi veriye ekle" onClick={addImage}>
-            <Plus className="h-4 w-4" />
-          </IconButton>
-        </div>
+        )}
       </div>
       <div className="min-w-0">
         <OutputBars task={task} values={prediction} />
         <div className="mt-2 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-2 text-xs leading-5 text-[#526070]">
-          Her kare bir giriş nöronu. Koyu kare 1, açık kare 0. Epoch attıkça çıktı çubukları doğru rakama yaklaşmalı.
+          Sürükleyerek çiz, etiketi yaz ve artıya bas. Yeni etiket ayrı bir output nöronu olarak modele eklenir.
         </div>
       </div>
       <div className="col-span-2 mt-1 grid grid-cols-4 gap-2">
