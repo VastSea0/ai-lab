@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, FileUp, RotateCcw, Table2, X } from "lucide-react";
+import { Check, ClipboardEdit, FileUp, RotateCcw, Table2, X } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import type { DataPoint } from "@/lib/ml/network";
 import { datasetTemplate, parseDatasetWithMapping, previewDatasetText } from "@/lib/ml/dataset";
@@ -21,6 +21,12 @@ export function DatasetImport({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [message, setMessage] = useState<string>("CSV veya JSON yükleyebilirsin.");
   const [error, setError] = useState<string | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualDraft, setManualDraft] = useState(() => ({
+    taskId: task.id,
+    text: datasetTemplate(task),
+  }));
+  const manualText = manualDraft.taskId === task.id ? manualDraft.text : datasetTemplate(task);
   const [studio, setStudio] = useState<{
     fileName: string;
     text: string;
@@ -36,28 +42,45 @@ export function DatasetImport({
     }
   }, [studio]);
 
+  const openStudioFromText = (text: string, sourceName: string) => {
+    const previewResult = previewDatasetText(text);
+    if (previewResult.headers.length === 0 || previewResult.rows.length === 0) {
+      throw new Error("Önizleme için başlık ve en az bir satır gerekli.");
+    }
+    const defaultInputs = previewResult.headers.slice(0, task.inputSize);
+    const defaultTargets = previewResult.headers.slice(task.inputSize, task.inputSize + Math.max(1, task.outputSize));
+    setStudio({
+      fileName: sourceName,
+      text,
+      mapping: {
+        inputColumns: defaultInputs,
+        targetColumns: defaultTargets.length > 0 ? defaultTargets : previewResult.headers.slice(-1),
+        normalize: true,
+        trainRatio: 0.8,
+      },
+    });
+  };
+
   const openFile = async (file: File) => {
     try {
       const text = await file.text();
-      const previewResult = previewDatasetText(text);
-      const defaultInputs = previewResult.headers.slice(0, task.inputSize);
-      const defaultTargets = previewResult.headers.slice(task.inputSize, task.inputSize + Math.max(1, task.outputSize));
-      setStudio({
-        fileName: file.name,
-        text,
-        mapping: {
-          inputColumns: defaultInputs,
-          targetColumns: defaultTargets.length > 0 ? defaultTargets : previewResult.headers.slice(-1),
-          normalize: true,
-          trainRatio: 0.8,
-        },
-      });
+      openStudioFromText(text, file.name);
       setError(null);
       setMessage(`${file.name} için Dataset Studio açıldı.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Veri okunamadı.");
     } finally {
       if (inputRef.current) inputRef.current.value = "";
+    }
+  };
+
+  const openManualStudio = () => {
+    try {
+      openStudioFromText(manualText, "manuel-veri");
+      setError(null);
+      setMessage("Manuel veri için Dataset Studio açıldı.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Manuel veri okunamadı.");
     }
   };
 
@@ -103,6 +126,18 @@ export function DatasetImport({
         </button>
         <button
           type="button"
+          className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-semibold ${
+            manualOpen
+              ? "border-[#2563eb] bg-[#e8f0ff] text-[#2563eb]"
+              : "border-[#cbd5e1] bg-white text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
+          }`}
+          onClick={() => setManualOpen((value) => !value)}
+        >
+          <ClipboardEdit className="h-4 w-4" />
+          CSV Yaz
+        </button>
+        <button
+          type="button"
                 className="inline-flex h-9 items-center gap-2 rounded-md border border-[#cbd5e1] bg-white px-3 text-xs font-semibold text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
           onClick={() => {
             onReset();
@@ -128,6 +163,47 @@ export function DatasetImport({
       <div className={`mt-2 text-[11px] leading-5 ${error ? "text-[#b91c1c]" : "text-[#526070]"}`}>
         {error ?? message}
       </div>
+      {manualOpen && (
+        <div className="mt-3 rounded-md border border-[#dbe3ee] bg-white p-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+                Manuel CSV / JSON
+              </div>
+              <div className="mt-1 text-[11px] leading-5 text-[#526070]">
+                Buraya veri yaz veya yapıştır; sonra kolonları Dataset Studio’da eşleştir.
+              </div>
+            </div>
+            <button
+              type="button"
+              className="inline-flex h-8 items-center rounded-md border border-[#cbd5e1] bg-white px-2 text-[11px] font-semibold text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
+              onClick={() => setManualDraft({ taskId: task.id, text: datasetTemplate(task) })}
+            >
+              Şablon
+            </button>
+          </div>
+          <textarea
+            className="min-h-32 w-full resize-y rounded-md border border-[#cbd5e1] bg-[#fbfdff] p-2 font-mono text-xs leading-5 text-[#334155] outline-none focus:border-[#2563eb]"
+            value={manualText}
+            onChange={(event) => setManualDraft({ taskId: task.id, text: event.target.value })}
+            spellCheck={false}
+            aria-label="Manuel CSV veya JSON verisi"
+          />
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <div className="text-[11px] text-[#64748b]">
+              CSV başlıklı olabilir: <span className="font-mono">x,target</span>
+            </div>
+            <button
+              type="button"
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-[#2563eb] px-3 text-xs font-semibold text-white hover:bg-[#1d4ed8]"
+              onClick={openManualStudio}
+            >
+              <Table2 className="h-4 w-4" />
+              Önizle ve Eşle
+            </button>
+          </div>
+        </div>
+      )}
       <details className="mt-2">
         <summary className="cursor-pointer text-[11px] font-semibold text-[#2563eb]">
           Beklenen format
