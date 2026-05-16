@@ -1,16 +1,53 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Maximize2, Minimize2, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import * as THREE from "three";
-import type { DataPoint, NeuralNetwork } from "@/lib/ml/network";
-import { formatNumber } from "@/lib/ml/network";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import type {
+  DataPoint,
+  EdgeSnapshot,
+  NeuralNetwork,
+  Selection,
+  TrainingPhase,
+  TrainingTrace,
+} from "@/lib/ml/network";
+import { edgeId, formatNumber } from "@/lib/ml/network";
+import type { VisualizationMode } from "@/lib/ml/lab-types";
 import type { Task } from "@/lib/ml/tasks";
 
 interface ModelSurface3DProps {
   task: Task;
   network: NeuralNetwork;
   data: DataPoint[];
+  trace: TrainingTrace;
+  phase: TrainingPhase;
+  visualizationMode: VisualizationMode;
+  selected: Selection | null;
+  hovered: Selection | null;
+  onSelect: (selection: Selection | null) => void;
+  onHover: (selection: Selection | null) => void;
+  onOpenDetail: (selection: Selection) => void;
 }
+
+type SceneMode = "architecture" | "surface";
+
+interface InteractiveObject extends THREE.Object3D {
+  userData: {
+    selection?: Selection;
+    pulse?: {
+      from: THREE.Vector3;
+      to: THREE.Vector3;
+      reverse: boolean;
+      delay: number;
+      duration: number;
+    };
+  };
+}
+
+const DEFAULT_ARCHITECTURE_CAMERA = new THREE.Vector3(5.8, 3.6, 6.5);
+const DEFAULT_SURFACE_CAMERA = new THREE.Vector3(5.2, 4.4, 6.1);
+const SCENE_TARGET = new THREE.Vector3(0, 0, 0);
 
 function classColor(task: Task, index: number) {
   return task.classColors?.[index] ?? ["#2563eb", "#ef4444", "#10b981", "#f59e0b"][index % 4];
@@ -32,6 +69,27 @@ function outputHeight(value: number) {
   return (value - 0.5) * 2.25;
 }
 
+function metricForEdge(edge: EdgeSnapshot | undefined, fallbackWeight: number, mode: VisualizationMode) {
+  if (mode === "weights") return fallbackWeight;
+  if (mode === "gradients") return edge?.gradient ?? 0;
+  return edge?.correction ?? 0;
+}
+
+function colorForMetric(value: number, mode: VisualizationMode) {
+  if (mode === "corrections") return value >= 0 ? "#059669" : "#f97316";
+  return value >= 0 ? "#2563eb" : "#e11d48";
+}
+
+function easeInOut(value: number) {
+  return value < 0.5 ? 2 * value * value : 1 - Math.pow(-2 * value + 2, 2) / 2;
+}
+
+function layerTitle(kind: string, index: number) {
+  if (kind === "input") return "INPUT";
+  if (kind === "output") return "OUTPUT";
+  return `HIDDEN ${index}`;
+}
+
 function clearScene(scene: THREE.Scene) {
   scene.traverse((object) => {
     const mesh = object as THREE.Mesh;
@@ -45,21 +103,48 @@ function clearScene(scene: THREE.Scene) {
   });
 }
 
-function addLabelSprite(text: string, color = "#18202f") {
+function addLabelSprite(text: string, color = "#18202f", width = 360, height = 108) {
   const canvas = document.createElement("canvas");
-  canvas.width = 320;
-  canvas.height = 92;
+  canvas.width = width;
+  canvas.height = height;
   const context = canvas.getContext("2d");
   if (!context) return null;
-  context.font = "600 32px Arial";
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = "rgba(255, 255, 255, 0.84)";
+  context.strokeStyle = "rgba(203, 213, 225, 0.92)";
+  context.lineWidth = 3;
+  const radius = 14;
+  context.beginPath();
+  context.roundRect(8, 8, width - 16, height - 16, radius);
+  context.fill();
+  context.stroke();
+  context.font = "700 28px Arial";
   context.fillStyle = color;
   context.textAlign = "center";
-  context.fillText(text, canvas.width / 2, 56);
+  const lines = text.split("\n");
+  lines.forEach((line, index) => {
+    context.fillText(line, width / 2, 42 + index * 32);
+  });
   const texture = new THREE.CanvasTexture(canvas);
   const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
   const sprite = new THREE.Sprite(material);
-  sprite.scale.set(1.5, 0.44, 1);
+  sprite.scale.set(width / 190, height / 190, 1);
   return sprite;
+}
+
+function addCylinderBetween(
+  from: THREE.Vector3,
+  to: THREE.Vector3,
+  radius: number,
+  material: THREE.Material
+) {
+  const direction = new THREE.Vector3().subVectors(to, from);
+  const length = direction.length();
+  const geometry = new THREE.CylinderGeometry(radius, radius, length, 10, 1);
+  const cylinder = new THREE.Mesh(geometry, material);
+  cylinder.position.copy(from).add(to).multiplyScalar(0.5);
+  cylinder.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+  return cylinder;
 }
 
 function buildSurfaceScene(scene: THREE.Scene, task: Task, network: NeuralNetwork, data: DataPoint[]) {
@@ -67,12 +152,12 @@ function buildSurfaceScene(scene: THREE.Scene, task: Task, network: NeuralNetwor
   grid.position.y = -1.18;
   scene.add(grid);
 
-  const xLabel = addLabelSprite(task.axisLabels?.x ?? "x", "#526070");
+  const xLabel = addLabelSprite(task.axisLabels?.x ?? "x", "#526070", 220, 82);
   if (xLabel) {
     xLabel.position.set(2.85, -1.05, -2.75);
     scene.add(xLabel);
   }
-  const yLabel = addLabelSprite(task.axisLabels?.y ?? (task.inputSize === 1 ? "model y" : "y"), "#526070");
+  const yLabel = addLabelSprite(task.axisLabels?.y ?? (task.inputSize === 1 ? "model y" : "y"), "#526070", 260, 82);
   if (yLabel) {
     yLabel.position.set(-2.9, -1.05, 2.75);
     scene.add(yLabel);
@@ -86,14 +171,18 @@ function buildSurfaceScene(scene: THREE.Scene, task: Task, network: NeuralNetwor
     });
     const curve = new THREE.CatmullRomCurve3(curvePoints);
     const tube = new THREE.TubeGeometry(curve, 96, 0.035, 8, false);
-    const material = new THREE.MeshStandardMaterial({
-      color: "#0f766e",
-      roughness: 0.42,
-      metalness: 0.08,
-      emissive: "#0f766e",
-      emissiveIntensity: 0.08,
-    });
-    scene.add(new THREE.Mesh(tube, material));
+    scene.add(
+      new THREE.Mesh(
+        tube,
+        new THREE.MeshStandardMaterial({
+          color: "#0f766e",
+          roughness: 0.42,
+          metalness: 0.08,
+          emissive: "#0f766e",
+          emissiveIntensity: 0.08,
+        })
+      )
+    );
 
     data.forEach((point) => {
       const sphere = new THREE.Mesh(
@@ -120,8 +209,7 @@ function buildSurfaceScene(scene: THREE.Scene, task: Task, network: NeuralNetwor
         task.outputType === "classification"
           ? Math.max(...output)
           : Math.max(0, Math.min(1, output[0] ?? 0));
-      const height = -0.75 + confidence * 1.35;
-      vertices.push(toSceneX(x), height, toSceneY(y));
+      vertices.push(toSceneX(x), -0.75 + confidence * 1.35, toSceneY(y));
       const color = new THREE.Color(classColor(task, cls));
       colors.push(color.r, color.g, color.b);
     }
@@ -170,83 +258,280 @@ function buildSurfaceScene(scene: THREE.Scene, task: Task, network: NeuralNetwor
   });
 }
 
-function buildArchitectureScene(scene: THREE.Scene, task: Task, network: NeuralNetwork) {
+function buildArchitectureScene({
+  scene,
+  task,
+  network,
+  trace,
+  phase,
+  visualizationMode,
+  selected,
+  pickables,
+  pulseObjects,
+}: {
+  scene: THREE.Scene;
+  task: Task;
+  network: NeuralNetwork;
+  trace: TrainingTrace;
+  phase: TrainingPhase;
+  visualizationMode: VisualizationMode;
+  selected: Selection | null;
+  pickables: THREE.Object3D[];
+  pulseObjects: THREE.Object3D[];
+}) {
   const layerCount = network.layers.length;
-  const layerGap = layerCount <= 1 ? 0 : 4.8 / (layerCount - 1);
-  const maxVisibleWeights = 360;
-  const weightLines: THREE.Vector3[][] = [];
+  const layerGap = layerCount <= 1 ? 0 : 5.25 / (layerCount - 1);
+  const maxVisibleWeights = 520;
   const neuronPositions = new Map<string, THREE.Vector3>();
+  const neuronTrace = new Map(trace.neurons.map((neuron) => [neuron.id, neuron]));
+  const edgeTrace = new Map(trace.edges.map((edge) => [edge.id, edge]));
+  const totalNeurons = network.layers.reduce((sum, layer) => sum + layer.neurons.length, 0);
+  const showDenseLabels = totalNeurons <= 14;
+  const activeId = selected?.id ?? null;
+  let visibleWeightCount = 0;
+  let pulseCount = 0;
 
   network.layers.forEach((layer, layerIndex) => {
-    const x = -2.4 + layerIndex * layerGap;
+    const x = -2.625 + layerIndex * layerGap;
     const count = layer.neurons.length;
-    const ringRadius = count > 18 ? 1.1 : 0.72;
+    const verticalGap = count <= 1 ? 0 : Math.min(0.42, 3.45 / (count - 1));
+    const startY = -((count - 1) * verticalGap) / 2;
+
+    const layerLabel = addLabelSprite(`${layerTitle(layer.kind, layerIndex)} · ${count}`, "#475569", 290, 74);
+    if (layerLabel) {
+      layerLabel.position.set(x, 2.12, 0);
+      layerLabel.scale.set(1.08, 0.34, 1);
+      scene.add(layerLabel);
+    }
+
     layer.neurons.forEach((neuron, neuronIndex) => {
-      const angle = (neuronIndex / Math.max(1, count)) * Math.PI * 2;
-      const stack = count > 18 ? Math.floor(neuronIndex / 18) * 0.34 : 0;
-      const y = Math.cos(angle) * ringRadius + stack - 0.25;
-      const z = Math.sin(angle) * ringRadius;
-      const position = new THREE.Vector3(x, y, z);
+      const spiral = count > 18 ? (neuronIndex % 5 - 2) * 0.1 : 0;
+      const position = new THREE.Vector3(x, startY + neuronIndex * verticalGap, spiral);
       neuronPositions.set(neuron.id, position);
 
+      const snapshot = neuronTrace.get(neuron.id);
+      const isActive = activeId === neuron.id;
       const color =
         layer.kind === "input" ? "#0284c7" : layer.kind === "output" ? "#dc2626" : "#d97706";
-      const sphere = new THREE.Mesh(
-        new THREE.SphereGeometry(count > 20 ? 0.045 : 0.075, 14, 14),
-        new THREE.MeshStandardMaterial({ color, roughness: 0.35 })
-      );
+      const radius = isActive ? 0.13 : count > 20 ? 0.055 : count > 12 ? 0.075 : 0.095;
+      const material = new THREE.MeshStandardMaterial({
+        color,
+        emissive: isActive || (phase === "forward" && layer.kind !== "input") ? color : "#000000",
+        emissiveIntensity: isActive ? 0.55 : phase === "forward" && layer.kind !== "input" ? 0.18 : 0,
+        roughness: 0.34,
+      });
+      const sphere = new THREE.Mesh(new THREE.SphereGeometry(radius, 18, 18), material) as InteractiveObject;
       sphere.position.copy(position);
+      const selection: Selection = {
+        type: "neuron",
+        id: neuron.id,
+        layerIndex: neuron.layerIndex,
+        neuronIndex: neuron.neuronIndex,
+      };
+      sphere.userData.selection = selection;
+      pickables.push(sphere);
       scene.add(sphere);
+
+      if (isActive) {
+        const ring = new THREE.Mesh(
+          new THREE.TorusGeometry(radius * 1.95, 0.012, 8, 44),
+          new THREE.MeshBasicMaterial({ color: "#111827" })
+        );
+        ring.position.copy(position);
+        scene.add(ring);
+      }
+
+      if (snapshot && (showDenseLabels || isActive || (layer.kind === "output" && count <= 6))) {
+        const label = addLabelSprite(
+          `${formatNumber(snapshot.value, 2)}\n${
+            layer.kind === "input" ? `x${neuronIndex + 1}` : `Σ=${formatNumber(snapshot.z, 2)}`
+          }`,
+          isActive ? "#111827" : "#334155",
+          190,
+          94
+        );
+        if (label) {
+          label.position.copy(position).add(new THREE.Vector3(0, radius + 0.22, 0));
+          label.scale.multiplyScalar(isActive ? 1.25 : 0.78);
+          scene.add(label);
+        }
+      }
     });
   });
 
   network.weights.forEach((matrix, layerIndex) => {
+    let layerVisibleCount = 0;
     matrix.forEach((row, fromIndex) => {
       row.forEach((weight, toIndex) => {
-        if (weightLines.length >= maxVisibleWeights) return;
-        if (Math.abs(weight) < 0.05 && weightLines.length > 80) return;
         const from = network.layers[layerIndex].neurons[fromIndex];
         const to = network.layers[layerIndex + 1].neurons[toIndex];
         const fromPosition = neuronPositions.get(from.id);
         const toPosition = neuronPositions.get(to.id);
-        if (fromPosition && toPosition) weightLines.push([fromPosition, toPosition]);
+        if (!fromPosition || !toPosition) return;
+
+        const id = edgeId(layerIndex, fromIndex, layerIndex + 1, toIndex);
+        const snapshot = edgeTrace.get(id);
+        const metric = metricForEdge(snapshot, weight, visualizationMode);
+        const magnitude = Math.min(1, Math.abs(metric) / (visualizationMode === "weights" ? 2.4 : 0.35));
+        const isConnectedToActive =
+          activeId !== null && (from.id === activeId || to.id === activeId || id === activeId);
+        const shouldShow =
+          isConnectedToActive ||
+          (visibleWeightCount < maxVisibleWeights && (layerVisibleCount < 120 || Math.abs(weight) > 0.05));
+        if (!shouldShow) return;
+        visibleWeightCount += 1;
+        layerVisibleCount += 1;
+
+        const color = colorForMetric(metric, visualizationMode);
+        const lineGeometry = new THREE.BufferGeometry().setFromPoints([fromPosition, toPosition]);
+        const line = new THREE.Line(
+          lineGeometry,
+          new THREE.LineBasicMaterial({
+            color,
+            transparent: true,
+            opacity: isConnectedToActive ? 0.9 : 0.18 + magnitude * 0.36,
+          })
+        );
+        scene.add(line);
+
+        const selection: Selection = {
+          type: "edge",
+          id,
+          fromLayerIndex: layerIndex,
+          fromNeuronIndex: fromIndex,
+          toLayerIndex: layerIndex + 1,
+          toNeuronIndex: toIndex,
+        };
+        const pickRadius = isConnectedToActive ? 0.035 : 0.018;
+        const pickTube = addCylinderBetween(
+          fromPosition,
+          toPosition,
+          pickRadius,
+          new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0 })
+        ) as InteractiveObject;
+        pickTube.userData.selection = selection;
+        pickables.push(pickTube);
+        scene.add(pickTube);
+
+        const isTrainingPhase = phase === "forward" || phase === "backward";
+        const pulsePriority =
+          isConnectedToActive ||
+          layerVisibleCount < 42 ||
+          Math.abs(snapshot?.gradient ?? 0) > 0.025 ||
+          Math.abs(snapshot?.contribution ?? 0) > 0.08;
+        if (isTrainingPhase && pulsePriority && pulseCount < 130) {
+          const pulseStrength = Math.max(
+            Math.abs(snapshot?.contribution ?? 0),
+            Math.abs(snapshot?.gradient ?? 0) * 1.8,
+            Math.abs(weight) * 0.18
+          );
+          const pulseMaterial = new THREE.MeshStandardMaterial({
+            color: phase === "forward" ? "#0891b2" : "#f97316",
+            emissive: phase === "forward" ? "#0891b2" : "#f97316",
+            emissiveIntensity: 0.68,
+            transparent: true,
+            opacity: 0,
+            roughness: 0.24,
+          });
+          const pulse = new THREE.Mesh(
+            new THREE.SphereGeometry(0.032 + Math.min(0.055, pulseStrength * 0.16), 14, 14),
+            pulseMaterial
+          ) as InteractiveObject;
+          pulse.visible = false;
+          pulse.userData.pulse = {
+            from: fromPosition.clone(),
+            to: toPosition.clone(),
+            reverse: phase === "backward",
+            delay:
+              (phase === "backward" ? network.weights.length - 1 - layerIndex : layerIndex) * 0.42 +
+              (pulseCount % 18) * 0.035,
+            duration: 2.35 + layerCount * 0.12,
+          };
+          pulseCount += 1;
+          pulseObjects.push(pulse);
+          scene.add(pulse);
+        }
       });
     });
   });
 
-  const linePositions = new Float32Array(weightLines.length * 2 * 3);
-  weightLines.forEach(([from, to], index) => {
-    linePositions.set([from.x, from.y, from.z, to.x, to.y, to.z], index * 6);
-  });
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(linePositions, 3));
-  scene.add(
-    new THREE.LineSegments(
-      geometry,
-      new THREE.LineBasicMaterial({ color: "#94a3b8", transparent: true, opacity: 0.26 })
-    )
-  );
-
-  const label = addLabelSprite(`${task.inputSize} input → ${task.outputSize} output`, "#334155");
+  const label = addLabelSprite(`${task.inputSize} input → ${task.outputSize} output`, "#334155", 420, 90);
   if (label) {
-    label.position.set(0, -1.85, 0);
-    label.scale.set(2.1, 0.58, 1);
+    label.position.set(0, -2.05, 0);
+    label.scale.set(2.2, 0.48, 1);
     scene.add(label);
   }
 }
 
-export function ModelSurface3D({ task, network, data }: ModelSurface3DProps) {
+function selectionTitle(selection: Selection | null) {
+  if (!selection) return "Bir nöron veya bağlantıya tıkla";
+  if (selection.type === "neuron") return `L${selection.layerIndex} N${selection.neuronIndex}`;
+  return `L${selection.fromLayerIndex}N${selection.fromNeuronIndex} → L${selection.toLayerIndex}N${selection.toNeuronIndex}`;
+}
+
+export function ModelSurface3D({
+  task,
+  network,
+  data,
+  trace,
+  phase,
+  visualizationMode,
+  selected,
+  hovered,
+  onSelect,
+  onHover,
+  onOpenDetail,
+}: ModelSurface3DProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const [mode, setMode] = useState<"surface" | "architecture">(
-    task.inputSize <= 2 ? "surface" : "architecture"
-  );
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const cameraPoseRef = useRef<{ position: THREE.Vector3; target: THREE.Vector3 } | null>(null);
+  const [mode, setMode] = useState<SceneMode>("architecture");
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const canShowSurface = task.inputSize <= 2;
   const activeMode = canShowSurface ? mode : "architecture";
+  const activeSelection = hovered ?? selected;
+  const selectedNeuron = activeSelection?.type === "neuron"
+    ? trace.neurons.find((neuron) => neuron.id === activeSelection.id)
+    : null;
+  const selectedEdge = activeSelection?.type === "edge"
+    ? trace.edges.find((edge) => edge.id === activeSelection.id)
+    : null;
   const summary = useMemo(() => {
-    if (activeMode === "architecture") return "Katmanlar uzayda dizilir; çizgiler ağırlık bağlantılarını temsil eder.";
+    if (activeMode === "architecture") {
+      return "2D ağın 3D karşılığı: nöronlar tıklanabilir, çizgiler seçili metriğe göre renklenir, epoch sırasında sinyal dalgaları akar.";
+    }
     if (task.inputSize === 1) return "Turuncu noktalar veri, yeşil çizgi modelin öğrendiği fonksiyon.";
     return "Renk sınıfı, yükseklik modelin o bölgede ne kadar emin olduğunu gösterir.";
   }, [activeMode, task.inputSize]);
+
+  const resetCamera = () => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) return;
+    camera.position.copy(activeMode === "architecture" ? DEFAULT_ARCHITECTURE_CAMERA : DEFAULT_SURFACE_CAMERA);
+    controls.target.copy(SCENE_TARGET);
+    controls.update();
+    cameraPoseRef.current = {
+      position: camera.position.clone(),
+      target: controls.target.clone(),
+    };
+  };
+
+  const zoomCamera = (factor: number) => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) return;
+    const direction = new THREE.Vector3().subVectors(camera.position, controls.target);
+    const nextDistance = THREE.MathUtils.clamp(direction.length() * factor, 3.2, 13);
+    direction.setLength(nextDistance);
+    camera.position.copy(controls.target).add(direction);
+    controls.update();
+    cameraPoseRef.current = {
+      position: camera.position.clone(),
+      target: controls.target.clone(),
+    };
+  };
 
   useEffect(() => {
     const host = hostRef.current;
@@ -255,14 +540,42 @@ export function ModelSurface3D({ task, network, data }: ModelSurface3DProps) {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#f8fbff");
     const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
-    camera.position.set(4.8, 3.8, 5.2);
-    camera.lookAt(0, 0, 0);
-
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    const pickables: THREE.Object3D[] = [];
+    const pulseObjects: THREE.Object3D[] = [];
+
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor("#f8fbff", 1);
-    host.appendChild(renderer.domElement);
     renderer.domElement.className = "h-full w-full";
+    host.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    const defaultPosition = activeMode === "architecture" ? DEFAULT_ARCHITECTURE_CAMERA : DEFAULT_SURFACE_CAMERA;
+    const savedPose = cameraPoseRef.current;
+    camera.position.copy(savedPose?.position ?? defaultPosition);
+    controls.target.copy(savedPose?.target ?? SCENE_TARGET);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.enablePan = true;
+    controls.enableZoom = true;
+    controls.minDistance = 3.2;
+    controls.maxDistance = 13;
+    controls.rotateSpeed = 0.58;
+    controls.zoomSpeed = 0.72;
+    controls.panSpeed = 0.62;
+    controls.update();
+    cameraRef.current = camera;
+    controlsRef.current = controls;
+
+    const syncCameraPose = () => {
+      cameraPoseRef.current = {
+        position: camera.position.clone(),
+        target: controls.target.clone(),
+      };
+    };
+    controls.addEventListener("change", syncCameraPose);
 
     scene.add(new THREE.AmbientLight("#ffffff", 1.75));
     const light = new THREE.DirectionalLight("#ffffff", 2.2);
@@ -272,24 +585,37 @@ export function ModelSurface3D({ task, network, data }: ModelSurface3DProps) {
     if (activeMode === "surface" && canShowSurface) {
       buildSurfaceScene(scene, task, network, data);
     } else {
-      buildArchitectureScene(scene, task, network);
+      buildArchitectureScene({
+        scene,
+        task,
+        network,
+        trace,
+        phase,
+        visualizationMode,
+        selected,
+        pickables,
+        pulseObjects,
+      });
     }
 
-    let yaw = -0.68;
-    let pitch = 0.58;
-    let dragging = false;
+    let pressing = false;
+    let moved = false;
     let lastX = 0;
     let lastY = 0;
     let frame = 0;
+    const start = performance.now();
 
-    const updateCamera = () => {
-      const distance = activeMode === "architecture" ? 6.3 : 7.1;
-      camera.position.set(
-        Math.sin(yaw) * Math.cos(pitch) * distance,
-        Math.sin(pitch) * distance,
-        Math.cos(yaw) * Math.cos(pitch) * distance
-      );
-      camera.lookAt(0, 0, 0);
+    const updatePointer = (event: PointerEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    };
+
+    const pickSelection = (event: PointerEvent) => {
+      if (activeMode !== "architecture") return null;
+      updatePointer(event);
+      raycaster.setFromCamera(pointer, camera);
+      return (raycaster.intersectObjects(pickables, false)[0]?.object as InteractiveObject | undefined)?.userData.selection ?? null;
     };
 
     const resize = () => {
@@ -300,28 +626,56 @@ export function ModelSurface3D({ task, network, data }: ModelSurface3DProps) {
     };
 
     const animate = () => {
-      if (!dragging) yaw += 0.0018;
-      updateCamera();
+      controls.update();
+      const elapsed = (performance.now() - start) / 1000;
+      pulseObjects.forEach((object) => {
+        const pulse = (object as InteractiveObject).userData.pulse;
+        if (!pulse) return;
+        const cycle = pulse.duration + network.layers.length * 0.18;
+        const local = ((elapsed - pulse.delay) % cycle + cycle) % cycle;
+        if (local > pulse.duration) {
+          object.visible = false;
+          return;
+        }
+        object.visible = true;
+        const progress = local / pulse.duration;
+        const t = pulse.reverse ? 1 - easeInOut(progress) : easeInOut(progress);
+        object.position.copy(pulse.from).lerp(pulse.to, t);
+        const material = (object as THREE.Mesh).material;
+        if (!Array.isArray(material) && "opacity" in material) {
+          material.opacity = 0.16 + Math.sin(Math.PI * progress) * 0.84;
+        }
+      });
       renderer.render(scene, camera);
       frame = window.requestAnimationFrame(animate);
     };
 
     const onPointerDown = (event: PointerEvent) => {
-      dragging = true;
+      pressing = true;
+      moved = false;
       lastX = event.clientX;
       lastY = event.clientY;
-      renderer.domElement.setPointerCapture(event.pointerId);
     };
     const onPointerMove = (event: PointerEvent) => {
-      if (!dragging) return;
-      yaw -= (event.clientX - lastX) * 0.006;
-      pitch = Math.max(-0.18, Math.min(1.1, pitch + (event.clientY - lastY) * 0.004));
-      lastX = event.clientX;
-      lastY = event.clientY;
+      if (pressing) {
+        const dx = event.clientX - lastX;
+        const dy = event.clientY - lastY;
+        if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+        return;
+      }
+      onHover(pickSelection(event));
     };
     const onPointerUp = (event: PointerEvent) => {
-      dragging = false;
-      renderer.domElement.releasePointerCapture(event.pointerId);
+      pressing = false;
+      if (!moved) onSelect(pickSelection(event));
+    };
+    const onDoubleClick = (event: MouseEvent) => {
+      const selection = pickSelection(event as PointerEvent);
+      if (selection) onOpenDetail(selection);
+    };
+    const onPointerLeave = () => {
+      pressing = false;
+      onHover(null);
     };
 
     const observer = new ResizeObserver(resize);
@@ -329,51 +683,202 @@ export function ModelSurface3D({ task, network, data }: ModelSurface3DProps) {
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     renderer.domElement.addEventListener("pointermove", onPointerMove);
     renderer.domElement.addEventListener("pointerup", onPointerUp);
+    renderer.domElement.addEventListener("dblclick", onDoubleClick);
+    renderer.domElement.addEventListener("pointerleave", onPointerLeave);
     resize();
     animate();
 
     return () => {
       window.cancelAnimationFrame(frame);
+      syncCameraPose();
       observer.disconnect();
+      controls.removeEventListener("change", syncCameraPose);
+      controls.dispose();
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
+      renderer.domElement.removeEventListener("dblclick", onDoubleClick);
+      renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
       clearScene(scene);
       renderer.dispose();
-      host.removeChild(renderer.domElement);
+      if (cameraRef.current === camera) cameraRef.current = null;
+      if (controlsRef.current === controls) controlsRef.current = null;
+      if (renderer.domElement.parentNode === host) host.removeChild(renderer.domElement);
     };
-  }, [activeMode, canShowSurface, data, network, task]);
+  }, [
+    activeMode,
+    canShowSurface,
+    data,
+    network,
+    onHover,
+    onOpenDetail,
+    onSelect,
+    phase,
+    selected,
+    task,
+    trace,
+    visualizationMode,
+  ]);
 
   return (
-    <div className="relative h-full w-full bg-[#f8fbff]">
+    <div
+      className={`${
+        isFullscreen ? "fixed inset-0 z-[80]" : "relative h-full w-full"
+      } overflow-hidden bg-[#f8fbff]`}
+    >
       <div ref={hostRef} className="h-full w-full" data-testid="model-surface-3d" />
-      <div className="pointer-events-none absolute left-5 top-5 max-w-[430px] rounded-md border border-white/70 bg-white/90 px-4 py-3 shadow-sm backdrop-blur">
-        <div className="text-sm font-semibold text-[#18202f]">3D Model Görünümü</div>
+      <div className="pointer-events-none absolute left-5 top-5 max-w-[470px] rounded-md border border-white/70 bg-white/90 px-4 py-3 shadow-sm backdrop-blur">
+        <div className="text-sm font-semibold text-[#18202f]">3D Model Simülasyonu</div>
         <div className="mt-1 text-xs leading-5 text-[#526070]">{summary}</div>
       </div>
-      <div className="absolute right-5 top-16 flex rounded-md border border-[#cbd5e1] bg-white/90 p-1 shadow-sm backdrop-blur">
-        <button
-          type="button"
-          className={`h-8 rounded px-3 text-xs font-semibold ${
-            activeMode === "surface" ? "bg-[#2563eb] text-white" : "text-[#334155] hover:bg-[#eef4ff]"
-          }`}
-          disabled={!canShowSurface}
-          onClick={() => setMode("surface")}
-        >
-          Yüzey
-        </button>
-        <button
-          type="button"
-          className={`h-8 rounded px-3 text-xs font-semibold ${
-            activeMode === "architecture" ? "bg-[#2563eb] text-white" : "text-[#334155] hover:bg-[#eef4ff]"
-          }`}
-          onClick={() => setMode("architecture")}
-        >
-          Ağ 3D
-        </button>
+      <div className="absolute right-5 top-5 flex flex-col items-end gap-2">
+        <div className="flex rounded-md border border-[#cbd5e1] bg-white/90 p-1 shadow-sm backdrop-blur">
+          <button
+            type="button"
+            className={`h-8 rounded px-3 text-xs font-semibold ${
+              activeMode === "architecture" ? "bg-[#2563eb] text-white" : "text-[#334155] hover:bg-[#eef4ff]"
+            }`}
+            onClick={() => setMode("architecture")}
+          >
+            Ağ 3D
+          </button>
+          <button
+            type="button"
+            className={`h-8 rounded px-3 text-xs font-semibold ${
+              activeMode === "surface" ? "bg-[#2563eb] text-white" : "text-[#334155] hover:bg-[#eef4ff]"
+            }`}
+            disabled={!canShowSurface}
+            onClick={() => setMode("surface")}
+          >
+            Yüzey
+          </button>
+        </div>
+        <div className="flex rounded-md border border-[#cbd5e1] bg-white/90 p-1 shadow-sm backdrop-blur">
+          <button
+            type="button"
+            className="grid h-9 w-9 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
+            title="Yakınlaş"
+            aria-label="3D sahneye yakınlaş"
+            onClick={() => zoomCamera(0.82)}
+          >
+            <ZoomIn size={17} />
+          </button>
+          <button
+            type="button"
+            className="grid h-9 w-9 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
+            title="Uzaklaş"
+            aria-label="3D sahneden uzaklaş"
+            onClick={() => zoomCamera(1.18)}
+          >
+            <ZoomOut size={17} />
+          </button>
+          <button
+            type="button"
+            className="grid h-9 w-9 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
+            title="Kamerayı sıfırla"
+            aria-label="3D kamerayı sıfırla"
+            onClick={resetCamera}
+          >
+            <RotateCcw size={17} />
+          </button>
+          <button
+            type="button"
+            className="grid h-9 w-9 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
+            title={isFullscreen ? "Tam ekrandan çık" : "Tam ekran"}
+            aria-label={isFullscreen ? "3D tam ekrandan çık" : "3D tam ekran aç"}
+            onClick={() => setIsFullscreen((value) => !value)}
+          >
+            {isFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+          </button>
+        </div>
       </div>
-      <div className="pointer-events-none absolute bottom-5 left-5 rounded-md border border-white/70 bg-white/90 px-3 py-2 text-[11px] leading-5 text-[#526070] shadow-sm backdrop-blur">
-        Epoch sonrası yüzey değişir · sürükleyerek döndür · loss {formatNumber(network.evaluateLoss(data), 5)}
+      <div className="pointer-events-none absolute bottom-5 left-5 max-w-[420px] rounded-md border border-white/70 bg-white/[0.92] px-3 py-2 text-[11px] leading-5 text-[#526070] shadow-sm backdrop-blur">
+        <div className="font-semibold text-[#18202f]">Sahne Kontrolü</div>
+        <div>Sürükle: döndür · Tekerlek: zoom · Sağ sürükle: pan</div>
+        <div>Faz: {phase} · loss {formatNumber(network.evaluateLoss(data), 5)}</div>
+      </div>
+      <div className="pointer-events-none absolute bottom-5 right-5 w-[min(390px,calc(100%-2.5rem))] rounded-md border border-[#dbe5f1] bg-white/[0.95] p-4 text-xs leading-5 text-[#526070] shadow-lg backdrop-blur">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#64748b]">Odak Mikroskobu</div>
+            <div className="mt-1 text-sm font-semibold text-[#18202f]">{selectionTitle(activeSelection)}</div>
+          </div>
+          {activeSelection ? (
+            <button
+              type="button"
+              className="pointer-events-auto rounded border border-[#cbd5e1] px-2 py-1 text-[11px] font-semibold text-[#334155] hover:bg-[#eef4ff]"
+              onClick={() => onOpenDetail(activeSelection)}
+            >
+              Detay
+            </button>
+          ) : null}
+        </div>
+        {selectedNeuron ? (
+          <div className="mt-3 space-y-3">
+            <div className="rounded border border-[#e2e8f0] bg-[#f8fafc] p-3 font-mono text-[11px] text-[#18202f]">
+              {selectedNeuron.layerKind === "input" ? "x" : "z"} = {selectedNeuron.formula}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded border border-[#e2e8f0] p-2">
+                <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">Aktivasyon</div>
+                <div className="mt-1 font-semibold text-[#18202f]">
+                  a = {formatNumber(selectedNeuron.value, 5)}
+                </div>
+              </div>
+              <div className="rounded border border-[#e2e8f0] p-2">
+                <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">Türev / Delta</div>
+                <div className="mt-1 font-semibold text-[#18202f]">
+                  {formatNumber(selectedNeuron.derivative, 5)} / {formatNumber(selectedNeuron.delta, 5)}
+                </div>
+              </div>
+            </div>
+            {selectedNeuron.incoming.length > 0 ? (
+              <div className="space-y-1">
+                <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">
+                  Gelen katkılar
+                </div>
+                {selectedNeuron.incoming.slice(0, 4).map((item, index) => (
+                  <div
+                    key={`${item.fromNeuronId}-${index}`}
+                    className="flex justify-between gap-3 rounded bg-[#f8fafc] px-2 py-1 font-mono text-[11px]"
+                  >
+                    <span>
+                      {formatNumber(item.inputValue, 3)} x {formatNumber(item.weight, 3)}
+                    </span>
+                    <span className="font-semibold text-[#18202f]">{formatNumber(item.product, 4)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : selectedEdge ? (
+          <div className="mt-3 space-y-3">
+            <div className="rounded border border-[#e2e8f0] bg-[#f8fafc] p-3 font-mono text-[11px] text-[#18202f]">
+              katkı = a(prev) x w = {formatNumber(selectedEdge.contribution, 5)}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded border border-[#e2e8f0] p-2">
+                <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">Ağırlık</div>
+                <div className="mt-1 font-semibold text-[#18202f]">
+                  {formatNumber(selectedEdge.weightBefore, 5)} → {formatNumber(selectedEdge.weightAfter, 5)}
+                </div>
+              </div>
+              <div className="rounded border border-[#e2e8f0] p-2">
+                <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">Gradient</div>
+                <div className="mt-1 font-semibold text-[#18202f]">{formatNumber(selectedEdge.gradient, 5)}</div>
+              </div>
+            </div>
+            <div className="rounded border border-[#fed7aa] bg-[#fff7ed] px-3 py-2 text-[#9a3412]">
+              Düzeltme etkisi: {formatNumber(selectedEdge.correction, 5)} · hata sinyali{" "}
+              {formatNumber(selectedEdge.errorSignal, 5)}
+            </div>
+          </div>
+        ) : (
+          <div className="mt-3 rounded border border-[#e2e8f0] bg-[#f8fafc] p-3">
+            Bir nöron veya bağlantıya tıklayınca burada denklemi, değerleri ve sonraki katmana giden etkiyi
+            okuyabilirsin. Çift tık aynı hesabı büyük matematik modalında açar.
+          </div>
+        )}
       </div>
     </div>
   );

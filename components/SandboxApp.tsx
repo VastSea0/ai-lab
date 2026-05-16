@@ -62,6 +62,7 @@ import {
 import { TASKS, Task, TaskId } from "@/lib/ml/tasks";
 import { DatasetImport } from "@/components/lab/DatasetImport";
 import { ModelSurface3D } from "@/components/lab/canvas/ModelSurface3D";
+import { AiCodeLab } from "@/components/lab/code/AiCodeLab";
 import { StepExplorer } from "@/components/lab/StepExplorer";
 import { ConceptBrowser, ConceptDrawer } from "@/components/lab/concepts/ConceptDrawer";
 import { useConceptDrawer } from "@/components/lab/hooks/useConceptDrawer";
@@ -70,6 +71,7 @@ import type { ConceptMode, DatasetMetadata, VisualizationMode } from "@/lib/ml/l
 import { lessonsForTask } from "@/lib/ml/lessons";
 import { presetsForTask } from "@/lib/ml/presets";
 import { simulateLearningRates } from "@/lib/ml/experiments";
+import type { AiCodeLabChallenge, PythonLabResult } from "@/lib/ml/code-lab";
 
 interface ModelState {
   network: NeuralNetwork;
@@ -140,6 +142,11 @@ function resizeDataTargets(data: DataPoint[], size: number) {
   }));
 }
 
+function finiteNumber(value: unknown, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
 function nlpTaskWithVectorizer(task: Task, vectorizer: NlpVectorizerModel | null): Task {
   if (task.id !== "sentiment" || !vectorizer) return task;
   const inputSize = Math.max(1, vectorizer.vocabulary.length);
@@ -158,13 +165,19 @@ function nlpTaskWithVectorizer(task: Task, vectorizer: NlpVectorizerModel | null
   };
 }
 
-function initialCanvasView(): "network" | "surface3d" {
+type CanvasView = "network" | "surface3d";
+
+function initialCanvasView(): CanvasView {
   if (typeof window === "undefined") return "network";
   const params = new URLSearchParams(window.location.search);
   return window.location.hash === "#3d" || params.get("view") === "3d" ? "surface3d" : "network";
 }
 
-export function SandboxApp() {
+interface SandboxAppProps {
+  initialView?: CanvasView;
+}
+
+export function SandboxApp({ initialView = "network" }: SandboxAppProps) {
   const [taskId, setTaskId] = useState<TaskId>("regression");
   const task = useMemo(() => TASKS.find((item) => item.id === taskId) ?? TASKS[0], [taskId]);
   const [customClassNames, setCustomClassNames] = useState<string[]>(() => task.classNames ?? []);
@@ -189,7 +202,7 @@ export function SandboxApp() {
   const [running, setRunning] = useState(false);
   const [phase, setPhase] = useState<TrainingPhase>("idle");
   const [focusMode, setFocusMode] = useState(false);
-  const [canvasView, setCanvasView] = useState<"network" | "surface3d">(initialCanvasView);
+  const [canvasView, setCanvasView] = useState<CanvasView>(initialView);
   const [conceptMode, setConceptMode] = useState<ConceptMode>("beginner");
   const [visualizationMode, setVisualizationMode] = useState<VisualizationMode>("weights");
   const [datasetMetadata, setDatasetMetadata] = useState<DatasetMetadata | null>(null);
@@ -216,10 +229,11 @@ export function SandboxApp() {
   useEffect(() => () => clearPhaseTimers(), [clearPhaseTimers]);
 
   useEffect(() => {
+    if (canvasView === "surface3d") return undefined;
     if (initialCanvasView() !== "surface3d") return undefined;
-    const frame = window.requestAnimationFrame(() => setCanvasView("surface3d"));
-    return () => window.cancelAnimationFrame(frame);
-  }, []);
+    const timer = window.setTimeout(() => setCanvasView("surface3d"), 0);
+    return () => window.clearTimeout(timer);
+  }, [canvasView]);
 
   const switchTask = useCallback((nextTaskId: TaskId) => {
     const nextTask = TASKS.find((item) => item.id === nextTaskId) ?? TASKS[0];
@@ -380,6 +394,71 @@ export function SandboxApp() {
     [task]
   );
 
+  const applyCodeLabResult = useCallback((challenge: AiCodeLabChallenge, result: PythonLabResult) => {
+    if (!challenge.taskId || !result.layers || !result.weights || !result.biases) return;
+    const nextTask = TASKS.find((item) => item.id === challenge.taskId) ?? TASKS[0];
+    const nextLayers = result.layers.map((layer) => ({
+      size: Math.max(1, Math.floor(finiteNumber(layer.size, 1))),
+      activation: layer.activation,
+    }));
+    const inputSize = nextLayers[0]?.size ?? nextTask.inputSize;
+    const outputSize = nextLayers.at(-1)?.size ?? nextTask.outputSize;
+    const nextClassNames =
+      nextTask.outputType === "classification"
+        ? Array.from(
+            { length: outputSize },
+            (_, index) => result.classNames?.[index] ?? nextTask.classNames?.[index] ?? `Sınıf ${index}`
+          )
+        : [];
+    const sourceData = result.dataset?.length ? result.dataset : nextTask.data;
+    const nextData = sourceData.map((point, index) => ({
+      id: String(point.id ?? `code-${index + 1}`),
+      inputs: Array.from({ length: inputSize }, (_, inputIndex) =>
+        finiteNumber(point.inputs?.[inputIndex], 0)
+      ),
+      targets: Array.from({ length: outputSize }, (_, targetIndex) =>
+        finiteNumber(point.targets?.[targetIndex], 0)
+      ),
+      label: point.label,
+    }));
+
+    setRunning(false);
+    setTaskId(nextTask.id);
+    setNlpVectorizer(null);
+    setCustomClassNames(nextClassNames);
+    setData(nextData);
+    setLearningRate(nextTask.defaultLearningRate);
+    setCanvasView("network");
+    setSelected(null);
+    setHovered(null);
+    setDetailSelection(null);
+    setDatasetMetadata({
+      name: `${challenge.title} Python çıktısı`,
+      rowCount: nextData.length,
+      inputColumns: Array.from({ length: inputSize }, (_, index) => `x${index + 1}`),
+      targetColumns:
+        nextClassNames.length > 0
+          ? nextClassNames
+          : Array.from({ length: outputSize }, (_, index) => `y${index + 1}`),
+      normalized: true,
+      trainRatio: 1,
+      rejectedRows: [],
+    });
+    setModel((previous) => {
+      const seed = previous.seed + 419;
+      const network = NeuralNetwork.fromParameters(nextLayers, result.weights ?? [], result.biases ?? [], seed);
+      const importedLosses = (result.losses ?? []).filter(Number.isFinite).slice(-160);
+      return {
+        network,
+        trace: firstTrace(network, nextData),
+        lossHistory: importedLosses.length > 0 ? importedLosses : [network.evaluateLoss(nextData)],
+        epoch: result.epochs ?? Math.max(0, importedLosses.length - 1),
+        seed,
+        history: [],
+      };
+    });
+  }, []);
+
   const runEpoch = useCallback(() => {
     setModel((previous) => {
       const nextNetwork = previous.network.clone();
@@ -475,7 +554,19 @@ export function SandboxApp() {
               />
             </>
           ) : (
-            <ModelSurface3D task={labTask} network={model.network} data={data} />
+            <ModelSurface3D
+              task={labTask}
+              network={model.network}
+              data={data}
+              trace={model.trace}
+              phase={phase}
+              visualizationMode={visualizationMode}
+              selected={selected}
+              hovered={hovered}
+              onSelect={handleCanvasSelect}
+              onHover={setHovered}
+              onOpenDetail={setDetailSelection}
+            />
           )}
           <div className="absolute right-5 top-5 z-20 flex rounded-md border border-[#cbd5e1] bg-white/90 p-1 shadow-sm backdrop-blur">
             <button
@@ -483,6 +574,7 @@ export function SandboxApp() {
               className={`inline-flex h-8 items-center gap-2 rounded px-3 text-xs font-semibold ${
                 canvasView === "network" ? "bg-[#2563eb] text-white" : "text-[#334155] hover:bg-[#eef4ff]"
               }`}
+              onPointerDown={() => setCanvasView("network")}
               onClick={() => setCanvasView("network")}
             >
               <BrainCircuit className="h-4 w-4" />
@@ -493,6 +585,7 @@ export function SandboxApp() {
               className={`inline-flex h-8 items-center gap-2 rounded px-3 text-xs font-semibold ${
                 canvasView === "surface3d" ? "bg-[#2563eb] text-white" : "text-[#334155] hover:bg-[#eef4ff]"
               }`}
+              onPointerDown={() => setCanvasView("surface3d")}
               onClick={() => setCanvasView("surface3d")}
             >
               <Box className="h-4 w-4" />
@@ -515,6 +608,7 @@ export function SandboxApp() {
           onResetData={resetTaskData}
           onAddImageExample={addImageExample}
           onApplyNlpDataset={applyNlpDataset}
+          onApplyCodeLabResult={applyCodeLabResult}
           onOpenDetail={setDetailSelection}
           onOpenConcept={openConcept}
         />
@@ -1318,6 +1412,7 @@ interface InspectorPanelProps {
   onResetData: () => void;
   onAddImageExample: (inputs: number[], label: string) => void;
   onApplyNlpDataset: (examples: TextExample[], config: NlpVectorizerConfig) => void;
+  onApplyCodeLabResult: (challenge: AiCodeLabChallenge, result: PythonLabResult) => void;
   onOpenDetail: (selection: Selection) => void;
   onOpenConcept: (conceptId: ConceptId) => void;
 }
@@ -1336,10 +1431,11 @@ function InspectorPanel({
   onResetData,
   onAddImageExample,
   onApplyNlpDataset,
+  onApplyCodeLabResult,
   onOpenDetail,
   onOpenConcept,
 }: InspectorPanelProps) {
-  const [tab, setTab] = useState<"inspect" | "data">("inspect");
+  const [tab, setTab] = useState<"inspect" | "data" | "code">("inspect");
   const neuron =
     selection?.type === "neuron"
       ? trace.neurons.find((item) => item.id === selection.id) ?? null
@@ -1358,6 +1454,7 @@ function InspectorPanel({
           items={[
             { id: "inspect", label: "Hesap" },
             { id: "data", label: "Veri" },
+            { id: "code", label: "Kod" },
           ]}
           value={tab}
           onChange={(value) => setTab(value as typeof tab)}
@@ -1380,7 +1477,7 @@ function InspectorPanel({
           {edge && <EdgeInspector edge={edge} conceptMode={conceptMode} onOpenConcept={onOpenConcept} />}
           {!neuron && !edge && <TraceSummary task={task} trace={trace} conceptMode={conceptMode} onOpenConcept={onOpenConcept} />}
         </div>
-      ) : (
+      ) : tab === "data" ? (
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
           <DatasetPanel
             task={task}
@@ -1394,6 +1491,10 @@ function InspectorPanel({
             onAddImageExample={onAddImageExample}
             onApplyNlpDataset={onApplyNlpDataset}
           />
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+          <AiCodeLab onApplyResult={onApplyCodeLabResult} />
         </div>
       )}
     </aside>
