@@ -38,16 +38,23 @@ interface InteractiveObject extends THREE.Object3D {
     pulse?: {
       from: THREE.Vector3;
       to: THREE.Vector3;
-      reverse: boolean;
-      delay: number;
+      forwardDelay: number;
+      backwardDelay: number;
       duration: number;
     };
   };
 }
 
+interface PulseBurst {
+  id: number;
+  phase: Exclude<TrainingPhase, "idle">;
+  startedAt: number;
+}
+
 const DEFAULT_ARCHITECTURE_CAMERA = new THREE.Vector3(5.8, 3.6, 6.5);
 const DEFAULT_SURFACE_CAMERA = new THREE.Vector3(5.2, 4.4, 6.1);
 const SCENE_TARGET = new THREE.Vector3(0, 0, 0);
+const PULSE_MAX_AGE_SECONDS = 7.5;
 
 function classColor(task: Task, index: number) {
   return task.classColors?.[index] ?? ["#2563eb", "#ef4444", "#10b981", "#f59e0b"][index % 4];
@@ -263,7 +270,6 @@ function buildArchitectureScene({
   task,
   network,
   trace,
-  phase,
   visualizationMode,
   selected,
   pickables,
@@ -273,7 +279,6 @@ function buildArchitectureScene({
   task: Task;
   network: NeuralNetwork;
   trace: TrainingTrace;
-  phase: TrainingPhase;
   visualizationMode: VisualizationMode;
   selected: Selection | null;
   pickables: THREE.Object3D[];
@@ -316,8 +321,8 @@ function buildArchitectureScene({
       const radius = isActive ? 0.13 : count > 20 ? 0.055 : count > 12 ? 0.075 : 0.095;
       const material = new THREE.MeshStandardMaterial({
         color,
-        emissive: isActive || (phase === "forward" && layer.kind !== "input") ? color : "#000000",
-        emissiveIntensity: isActive ? 0.55 : phase === "forward" && layer.kind !== "input" ? 0.18 : 0,
+        emissive: isActive ? color : "#000000",
+        emissiveIntensity: isActive ? 0.55 : 0,
         roughness: 0.34,
       });
       const sphere = new THREE.Mesh(new THREE.SphereGeometry(radius, 18, 18), material) as InteractiveObject;
@@ -413,21 +418,20 @@ function buildArchitectureScene({
         pickables.push(pickTube);
         scene.add(pickTube);
 
-        const isTrainingPhase = phase === "forward" || phase === "backward";
         const pulsePriority =
           isConnectedToActive ||
           layerVisibleCount < 42 ||
           Math.abs(snapshot?.gradient ?? 0) > 0.025 ||
           Math.abs(snapshot?.contribution ?? 0) > 0.08;
-        if (isTrainingPhase && pulsePriority && pulseCount < 130) {
+        if (pulsePriority && pulseCount < 130) {
           const pulseStrength = Math.max(
             Math.abs(snapshot?.contribution ?? 0),
             Math.abs(snapshot?.gradient ?? 0) * 1.8,
             Math.abs(weight) * 0.18
           );
           const pulseMaterial = new THREE.MeshStandardMaterial({
-            color: phase === "forward" ? "#0891b2" : "#f97316",
-            emissive: phase === "forward" ? "#0891b2" : "#f97316",
+            color: "#0891b2",
+            emissive: "#0891b2",
             emissiveIntensity: 0.68,
             transparent: true,
             opacity: 0,
@@ -441,10 +445,8 @@ function buildArchitectureScene({
           pulse.userData.pulse = {
             from: fromPosition.clone(),
             to: toPosition.clone(),
-            reverse: phase === "backward",
-            delay:
-              (phase === "backward" ? network.weights.length - 1 - layerIndex : layerIndex) * 0.42 +
-              (pulseCount % 18) * 0.035,
+            forwardDelay: layerIndex * 0.42 + (pulseCount % 18) * 0.035,
+            backwardDelay: (network.weights.length - 1 - layerIndex) * 0.42 + (pulseCount % 18) * 0.035,
             duration: 2.35 + layerCount * 0.12,
           };
           pulseCount += 1;
@@ -486,6 +488,8 @@ export function ModelSurface3D({
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const cameraPoseRef = useRef<{ position: THREE.Vector3; target: THREE.Vector3 } | null>(null);
+  const pulseBurstsRef = useRef<PulseBurst[]>([]);
+  const pulseBurstIdRef = useRef(0);
   const [mode, setMode] = useState<SceneMode>("architecture");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const canShowSurface = task.inputSize <= 2;
@@ -532,6 +536,20 @@ export function ModelSurface3D({
       target: controls.target.clone(),
     };
   };
+
+  useEffect(() => {
+    if (phase === "idle") return;
+    const now = performance.now() / 1000;
+    pulseBurstsRef.current = [
+      ...pulseBurstsRef.current.filter((burst) => now - burst.startedAt < PULSE_MAX_AGE_SECONDS),
+      {
+        id: pulseBurstIdRef.current,
+        phase,
+        startedAt: now,
+      },
+    ].slice(-5);
+    pulseBurstIdRef.current += 1;
+  }, [phase]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -590,7 +608,6 @@ export function ModelSurface3D({
         task,
         network,
         trace,
-        phase,
         visualizationMode,
         selected,
         pickables,
@@ -603,7 +620,6 @@ export function ModelSurface3D({
     let lastX = 0;
     let lastY = 0;
     let frame = 0;
-    const start = performance.now();
 
     const updatePointer = (event: PointerEvent) => {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -627,22 +643,34 @@ export function ModelSurface3D({
 
     const animate = () => {
       controls.update();
-      const elapsed = (performance.now() - start) / 1000;
+      const now = performance.now() / 1000;
+      const liveBursts = pulseBurstsRef.current
+        .filter((burst) => now - burst.startedAt < PULSE_MAX_AGE_SECONDS)
+        .sort((a, b) => b.id - a.id);
+      pulseBurstsRef.current = liveBursts;
       pulseObjects.forEach((object) => {
         const pulse = (object as InteractiveObject).userData.pulse;
         if (!pulse) return;
-        const cycle = pulse.duration + network.layers.length * 0.18;
-        const local = ((elapsed - pulse.delay) % cycle + cycle) % cycle;
-        if (local > pulse.duration) {
+        const activeBurst = liveBursts.find((burst) => {
+          const delay = burst.phase === "forward" ? pulse.forwardDelay : pulse.backwardDelay;
+          const local = now - burst.startedAt - delay;
+          return local >= 0 && local <= pulse.duration;
+        });
+        if (!activeBurst) {
           object.visible = false;
           return;
         }
+        const delay = activeBurst.phase === "forward" ? pulse.forwardDelay : pulse.backwardDelay;
+        const local = now - activeBurst.startedAt - delay;
         object.visible = true;
         const progress = local / pulse.duration;
-        const t = pulse.reverse ? 1 - easeInOut(progress) : easeInOut(progress);
+        const t = activeBurst.phase === "backward" ? 1 - easeInOut(progress) : easeInOut(progress);
         object.position.copy(pulse.from).lerp(pulse.to, t);
         const material = (object as THREE.Mesh).material;
-        if (!Array.isArray(material) && "opacity" in material) {
+        if (!Array.isArray(material) && material instanceof THREE.MeshStandardMaterial) {
+          const color = activeBurst.phase === "forward" ? "#0891b2" : "#f97316";
+          material.color.set(color);
+          material.emissive.set(color);
           material.opacity = 0.16 + Math.sin(Math.PI * progress) * 0.84;
         }
       });
@@ -713,7 +741,6 @@ export function ModelSurface3D({
     onHover,
     onOpenDetail,
     onSelect,
-    phase,
     selected,
     task,
     trace,
