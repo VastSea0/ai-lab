@@ -140,7 +140,7 @@ export function AiCodeLabWorkspace() {
   );
 
   return (
-    <WorkbenchShell minWidth={1240}>
+    <WorkbenchShell>
       <div className="grid h-full grid-rows-[56px_minmax(0,1fr)]">
         <header className="flex h-full items-center justify-between border-b border-[#dbe3ee] bg-white px-4">
           <div className="flex min-w-0 items-center gap-2.5">
@@ -196,7 +196,7 @@ export function AiCodeLabWorkspace() {
           </div>
         </header>
 
-        <div className="grid min-h-0 grid-cols-[390px_minmax(0,1fr)] gap-px bg-[#d7dde8]">
+        <div className="grid min-h-0 grid-cols-[clamp(320px,33vw,390px)_minmax(0,1fr)] gap-px bg-[#d7dde8]">
           <aside className="min-h-0 overflow-y-auto bg-white px-3 py-3">
             <AiCodeLab onApplyResult={applyResult} applyLabel="Görselleştir" />
           </aside>

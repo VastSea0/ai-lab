@@ -429,8 +429,8 @@ export function SandboxApp({ initialView = "network" }: SandboxAppProps) {
   const accuracy = labTask.outputType === "classification" ? model.network.evaluateAccuracy(data) : null;
 
   return (
-    <WorkbenchShell minWidth={1280}>
-      <div className="grid h-full grid-cols-[300px_minmax(0,1fr)_340px] grid-rows-[56px_minmax(0,1fr)_176px] gap-px bg-[#d7dde8]">
+    <WorkbenchShell>
+      <div className="grid h-full grid-cols-[clamp(238px,23vw,300px)_minmax(0,1fr)_clamp(268px,26vw,340px)] grid-rows-[56px_minmax(0,1fr)_176px] gap-px bg-[#d7dde8]">
         <AppHeader
           task={labTask}
           epoch={model.epoch}

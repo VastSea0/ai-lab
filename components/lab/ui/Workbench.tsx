@@ -23,17 +23,12 @@ function cx(...classes: Array<string | false | null | undefined>) {
 export function WorkbenchShell({
   children,
   className = "",
-  minWidth = 1280,
 }: {
   children: ReactNode;
   className?: string;
-  minWidth?: number;
 }) {
   return (
-    <main
-      className={cx("h-screen min-h-[720px] overflow-hidden bg-[#f4f7fb] text-[#172033]", className)}
-      style={{ minWidth }}
-    >
+    <main className={cx("h-screen min-h-[720px] w-screen max-w-full overflow-hidden bg-[#f4f7fb] text-[#172033]", className)}>
       {children}
     </main>
   );
