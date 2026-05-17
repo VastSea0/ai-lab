@@ -22,6 +22,7 @@ import {
   type PythonLabRunResponse,
 } from "@/lib/ml/code-lab";
 import { formatNumber } from "@/lib/ml/network";
+import { CompactPanel, DrawerPanel, PanelTabs } from "@/components/lab/ui/Workbench";
 
 const trackMeta: Record<CodeLabTrack, { label: string; icon: React.ReactNode }> = {
   "core-ml": { label: "ML", icon: <FlaskConical className="h-3.5 w-3.5" /> },
@@ -97,66 +98,50 @@ export function AiCodeLab({
 
   return (
     <div className="space-y-3">
-      <div className="rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3">
-        <div className="flex items-center gap-2 text-sm font-semibold text-[#18202f]">
-          <Code2 className="h-4 w-4 text-[#2563eb]" />
-          LeetCode AI Kod Labı
-        </div>
-        <div className="mt-2 grid grid-cols-3 gap-1 rounded-md border border-[#dbe3ee] bg-white p-1">
-          {(Object.keys(trackMeta) as CodeLabTrack[]).map((item) => (
+      <CompactPanel title="AI Challenge" icon={<Code2 className="h-4 w-4" />} bodyClassName="space-y-2">
+        <PanelTabs
+          compact
+          items={(Object.keys(trackMeta) as CodeLabTrack[]).map((item) => ({
+            id: item,
+            label: trackMeta[item].label,
+            icon: trackMeta[item].icon,
+          }))}
+          value={track}
+          onChange={selectTrack}
+        />
+        <div className="space-y-1.5">
+          {visibleChallenges.map((challenge) => (
             <button
-              key={item}
+              key={challenge.id}
               type="button"
-              className={`inline-flex h-8 items-center justify-center gap-1 rounded px-2 text-[11px] font-semibold ${
-                track === item ? "bg-[#2563eb] text-white" : "text-[#64748b] hover:bg-[#eef4ff] hover:text-[#2563eb]"
+              className={`block w-full rounded-md border p-2.5 text-left transition ${
+                selected.id === challenge.id
+                  ? "border-[#2563eb] bg-[#eef4ff]"
+                  : "border-[#dbe3ee] bg-white hover:border-[#2563eb]"
               }`}
-              onClick={() => selectTrack(item)}
+              onClick={() => selectChallenge(challenge)}
             >
-              {trackMeta[item].icon}
-              {trackMeta[item].label}
+              <div className="flex items-start justify-between gap-2">
+                <span className="min-w-0 truncate text-xs font-semibold text-[#18202f]">{challenge.title}</span>
+                <span className={`rounded border px-1.5 py-0.5 text-[10px] font-bold ${difficultyClass[challenge.difficulty]}`}>
+                  {challenge.difficulty}
+                </span>
+              </div>
+              <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-[#526070]">{challenge.summary}</div>
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {challenge.libraries.map((library) => (
+                  <span key={library} className="rounded border border-[#dbe3ee] bg-[#fbfdff] px-1.5 py-0.5 text-[10px] font-semibold text-[#64748b]">
+                    {library}
+                  </span>
+                ))}
+              </div>
             </button>
           ))}
         </div>
-      </div>
+      </CompactPanel>
 
-      <div className="space-y-2">
-        {visibleChallenges.map((challenge) => (
-          <button
-            key={challenge.id}
-            type="button"
-            className={`block w-full rounded-md border p-3 text-left transition ${
-              selected.id === challenge.id
-                ? "border-[#2563eb] bg-[#eef4ff]"
-                : "border-[#dbe3ee] bg-white hover:border-[#2563eb]"
-            }`}
-            onClick={() => selectChallenge(challenge)}
-          >
-            <div className="flex items-start justify-between gap-2">
-              <span className="min-w-0 text-xs font-semibold text-[#18202f]">{challenge.title}</span>
-              <span className={`rounded border px-1.5 py-0.5 text-[10px] font-bold ${difficultyClass[challenge.difficulty]}`}>
-                {challenge.difficulty}
-              </span>
-            </div>
-            <div className="mt-1 text-[11px] leading-4 text-[#526070]">{challenge.summary}</div>
-            <div className="mt-2 flex flex-wrap gap-1">
-              {challenge.libraries.map((library) => (
-                <span key={library} className="rounded border border-[#dbe3ee] bg-[#fbfdff] px-1.5 py-0.5 text-[10px] font-semibold text-[#64748b]">
-                  {library}
-                </span>
-              ))}
-            </div>
-          </button>
-        ))}
-      </div>
-
-      <div className="rounded-md border border-[#dbe3ee] bg-white p-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="text-xs font-semibold text-[#18202f]">{selected.title}</div>
-            <div className="mt-1 text-[11px] leading-5 text-[#526070]">{selected.prompt}</div>
-          </div>
-          <Cpu className="h-4 w-4 shrink-0 text-[#2563eb]" />
-        </div>
+      <DrawerPanel title="Brief" icon={<Cpu className="h-4 w-4" />} summary={selected.title}>
+        <div className="text-[11px] leading-5 text-[#526070]">{selected.prompt}</div>
         <div className="mt-2 flex flex-wrap gap-1">
           {selected.concepts.map((concept) => (
             <span key={concept} className="rounded-md bg-[#f1f5f9] px-2 py-1 text-[10px] font-semibold text-[#475569]">
@@ -164,14 +149,13 @@ export function AiCodeLab({
             </span>
           ))}
         </div>
-      </div>
+      </DrawerPanel>
 
-      <div className="rounded-md border border-[#dbe3ee] bg-white">
-        <div className="flex items-center justify-between border-b border-[#e2e8f0] px-3 py-2">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
-            <Code2 className="h-4 w-4 text-[#2563eb]" />
-            Python
-          </div>
+      <CompactPanel
+        title="Python"
+        icon={<Code2 className="h-4 w-4" />}
+        bodyClassName="p-0"
+        actions={
           <button
             type="button"
             className="inline-flex h-7 items-center gap-1 rounded border border-[#cbd5e1] bg-white px-2 text-[11px] font-semibold text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
@@ -180,9 +164,10 @@ export function AiCodeLab({
             <RotateCcw className="h-3.5 w-3.5" />
             Sıfırla
           </button>
-        </div>
+        }
+      >
         <textarea
-          className="h-64 w-full resize-y border-0 bg-[#0f172a] p-3 font-mono text-[11px] leading-5 text-[#e2e8f0] outline-none"
+          className="h-[336px] w-full resize-y border-0 bg-[#0f172a] p-3 font-mono text-[11px] leading-5 text-[#e2e8f0] outline-none"
           value={code}
           onChange={(event) => setCode(event.target.value)}
           spellCheck={false}
@@ -210,7 +195,7 @@ export function AiCodeLab({
             {applyLabel}
           </button>
         </div>
-      </div>
+      </CompactPanel>
 
       {response && <RunResult response={response} challenge={selected} />}
     </div>
@@ -225,35 +210,48 @@ function RunResult({
   challenge: AiCodeLabChallenge;
 }) {
   const result = response.result;
+  const [tab, setTab] = useState<"summary" | "preview" | "logs">("summary");
+  const hasPreview = Boolean(
+    result?.losses?.length || result?.layers?.length || result?.policy?.length || result?.notes?.length
+  );
+  const hasLogs = Boolean(response.stdout || response.stderr);
+
   return (
-    <div className="space-y-3">
+    <CompactPanel
+      title="Python Sonucu"
+      icon={response.ok ? <CheckCircle2 className="h-4 w-4 text-[#047857]" /> : <AlertTriangle className="h-4 w-4 text-[#b91c1c]" />}
+      bodyClassName="space-y-3"
+    >
       <div
-        className={`rounded-md border p-3 ${
+        className={`rounded-md border px-3 py-2 text-[11px] leading-5 ${
           response.ok ? "border-[#bbf7d0] bg-[#f0fdf4]" : "border-[#fecaca] bg-[#fef2f2]"
         }`}
       >
-        <div className="flex items-center gap-2 text-xs font-semibold text-[#18202f]">
-          {response.ok ? (
-            <CheckCircle2 className="h-4 w-4 text-[#047857]" />
-          ) : (
-            <AlertTriangle className="h-4 w-4 text-[#b91c1c]" />
-          )}
-          {response.ok ? "Python sonucu hazır" : "Python sonucu hata verdi"}
+        <div className="font-semibold text-[#18202f]">
+          {response.ok ? "Hazır" : "Hata"} · {formatNumber(response.durationMs / 1000, 2)} sn
         </div>
-        <div className="mt-1 text-[11px] leading-5 text-[#526070]">
-          {formatNumber(response.durationMs / 1000, 2)} sn · {challenge.applyToNetwork ? "network aktarımı destekli" : "simülasyon sonucu"}
+        <div className="text-[#526070]">
+          {challenge.applyToNetwork ? "network aktarımı destekli" : "simülasyon sonucu"}
           {response.error ? ` · ${response.error}` : ""}
         </div>
       </div>
 
-      {result && (
-        <>
-          <ResultMetrics result={result} />
-          {result.losses && result.losses.length > 0 && <LossSparkline values={result.losses} />}
-          {result.layers && <LayerPreview layers={result.layers} />}
-          {result.policy && <PolicyPreview policy={result.policy} trajectory={result.trajectory ?? []} />}
-          {result.notes && result.notes.length > 0 && (
-            <div className="rounded-md border border-[#dbe3ee] bg-white p-3">
+      <PanelTabs
+        compact
+        items={[
+          { id: "summary", label: "Özet" },
+          { id: "preview", label: "Preview", badge: hasPreview ? "var" : undefined },
+          { id: "logs", label: "Logs", badge: hasLogs ? "var" : undefined },
+        ]}
+        value={tab}
+        onChange={setTab}
+      />
+
+      {tab === "summary" && (
+        <div className="space-y-3">
+          {result && <ResultMetrics result={result} />}
+          {result?.notes && result.notes.length > 0 && (
+            <div className="rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3">
               <div className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
                 Notlar
               </div>
@@ -264,21 +262,26 @@ function RunResult({
               </div>
             </div>
           )}
-        </>
+        </div>
       )}
 
-      {(response.stdout || response.stderr) && (
-        <details className="rounded-md border border-[#dbe3ee] bg-white">
-          <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-[#2563eb]">
-            stdout / stderr
-          </summary>
-          <pre className="max-h-44 overflow-auto border-t border-[#e2e8f0] bg-[#0f172a] p-3 text-[10px] leading-4 text-[#e2e8f0]">
-            {response.stdout}
-            {response.stderr ? `\n--- stderr ---\n${response.stderr}` : ""}
-          </pre>
-        </details>
+      {tab === "preview" && (
+        <div className="space-y-3">
+          {!hasPreview && <div className="text-[11px] leading-5 text-[#64748b]">Bu sonuç için ek önizleme yok.</div>}
+          {result?.losses && result.losses.length > 0 && <LossSparkline values={result.losses} />}
+          {result?.layers && <LayerPreview layers={result.layers} />}
+          {result?.policy && <PolicyPreview policy={result.policy} trajectory={result.trajectory ?? []} />}
+        </div>
       )}
-    </div>
+
+      {tab === "logs" && (
+        <pre className="max-h-44 overflow-auto rounded-md bg-[#0f172a] p-3 text-[10px] leading-4 text-[#e2e8f0]">
+          {hasLogs
+            ? `${response.stdout}${response.stderr ? `\n--- stderr ---\n${response.stderr}` : ""}`
+            : "stdout / stderr boş"}
+        </pre>
+      )}
+    </CompactPanel>
   );
 }
 

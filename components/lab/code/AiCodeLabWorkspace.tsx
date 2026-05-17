@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useMemo, useState } from "react";
 import { ModelSurface3D } from "@/components/lab/canvas/ModelSurface3D";
 import { AiCodeLab } from "@/components/lab/code/AiCodeLab";
+import { IconToolbar, MetricStrip, StatusToast, WorkbenchShell } from "@/components/lab/ui/Workbench";
 import type { AiCodeLabChallenge, PythonLabResult } from "@/lib/ml/code-lab";
 import type { DataPoint, LayerConfig, Selection, TrainingPhase, TrainingTrace } from "@/lib/ml/network";
 import { formatNumber, NeuralNetwork } from "@/lib/ml/network";
@@ -139,44 +140,50 @@ export function AiCodeLabWorkspace() {
   );
 
   return (
-    <main className="h-screen min-h-[720px] min-w-[1240px] overflow-hidden bg-[#f5f7fb] text-[#18202f]">
-      <div className="grid h-full grid-rows-[60px_minmax(0,1fr)]">
-        <header className="flex items-center justify-between border-b border-[#dbe3ee] bg-white px-5">
-          <div className="flex min-w-0 items-center gap-3">
+    <WorkbenchShell minWidth={1240}>
+      <div className="grid h-full grid-rows-[56px_minmax(0,1fr)]">
+        <header className="flex h-full items-center justify-between border-b border-[#dbe3ee] bg-white px-4">
+          <div className="flex min-w-0 items-center gap-2.5">
             <Link
               href="/"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#cbd5e1] bg-white text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#cbd5e1] bg-white text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
               aria-label="Sandbox sayfasına dön"
             >
               <ArrowLeft className="h-4 w-4" />
             </Link>
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[#e8f0ff] text-[#2563eb]">
-              <BrainCircuit className="h-5 w-5" />
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#e8f0ff] text-[#2563eb]">
+              <BrainCircuit className="h-[18px] w-[18px]" />
             </div>
             <div className="min-w-0">
-              <div className="truncate text-base font-semibold">AI Kod Labı</div>
-              <div className="truncate text-xs text-[#607089]">
+              <div className="truncate text-sm font-semibold">AI Kod Labı</div>
+              <div className="truncate text-[11px] text-[#607089]">
                 Python kütüphaneleriyle kodla, sonucu simülasyona dönüştür
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <HeaderMetric label="Katman" value={layerText} />
-            <HeaderMetric label="Loss" value={activeLoss === null ? "-" : formatNumber(activeLoss, 6)} />
-            <select
-              className="h-9 rounded-md border border-[#cbd5e1] bg-white px-2 text-xs font-semibold text-[#334155]"
-              value={visualizationMode}
-              onChange={(event) => setVisualizationMode(event.target.value as VisualizationMode)}
-              aria-label="Görselleştirme modu"
-            >
-              <option value="weights">Ağırlık</option>
-              <option value="gradients">Gradient</option>
-              <option value="corrections">Düzeltme</option>
-            </select>
+          <div className="flex min-w-0 items-center gap-2">
+            <MetricStrip
+              items={[
+                { label: "Katman", value: layerText },
+                { label: "Loss", value: activeLoss === null ? "-" : formatNumber(activeLoss, 6) },
+              ]}
+            />
+            <IconToolbar label="Kod labı ayarları" className="shrink-0">
+              <select
+                className="h-7 rounded border-0 bg-transparent px-1.5 text-[11px] font-semibold text-[#334155] outline-none"
+                value={visualizationMode}
+                onChange={(event) => setVisualizationMode(event.target.value as VisualizationMode)}
+                aria-label="Görselleştirme modu"
+              >
+                <option value="weights">Ağırlık</option>
+                <option value="gradients">Gradient</option>
+                <option value="corrections">Düzeltme</option>
+              </select>
+            </IconToolbar>
             <button
               type="button"
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-[#cbd5e1] bg-white px-3 text-xs font-semibold text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-[#cbd5e1] bg-white px-2.5 text-xs font-semibold text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
               onClick={() => {
                 setPhase("forward");
                 window.setTimeout(() => setPhase("backward"), 620);
@@ -189,8 +196,8 @@ export function AiCodeLabWorkspace() {
           </div>
         </header>
 
-        <div className="grid min-h-0 grid-cols-[430px_minmax(0,1fr)] gap-px bg-[#d7dde8]">
-          <aside className="min-h-0 overflow-y-auto bg-white px-4 py-4">
+        <div className="grid min-h-0 grid-cols-[390px_minmax(0,1fr)] gap-px bg-[#d7dde8]">
+          <aside className="min-h-0 overflow-y-auto bg-white px-3 py-3">
             <AiCodeLab onApplyResult={applyResult} applyLabel="Görselleştir" />
           </aside>
 
@@ -210,25 +217,22 @@ export function AiCodeLabWorkspace() {
                 onOpenDetail={setSelected}
               />
             ) : (
-              <div className="flex h-full items-center justify-center">
-                <div className="w-[460px] rounded-md border border-[#dbe3ee] bg-white p-5 shadow-sm">
-                  <div className="flex items-center gap-2 text-sm font-semibold">
+              <div className="flex h-full items-start justify-start p-5">
+                <div className="max-w-[420px] rounded-md border border-[#dbe3ee] bg-white/88 px-4 py-3 shadow-sm backdrop-blur">
+                  <div className="flex items-center gap-2 text-xs font-semibold">
                     <Cuboid className="h-5 w-5 text-[#2563eb]" />
                     Model Simülasyonu
                   </div>
-                  <div className="mt-2 text-sm leading-6 text-[#526070]">
-                    Soldaki Python challenge&apos;ını çalıştırıp sonucu görselleştirince eğitilen nöronlar burada
-                    ayrı bir sahnede açılır.
-                  </div>
+                  <div className="mt-1 text-xs leading-5 text-[#526070]">Model bekleniyor.</div>
                 </div>
               </div>
             )}
 
-            <div className="pointer-events-none absolute bottom-5 right-5 w-[360px] rounded-md border border-white/70 bg-white/[0.92] px-3 py-2 text-[11px] leading-5 text-[#526070] shadow-sm backdrop-blur">
-              <div className="flex items-center gap-2 font-semibold text-[#18202f]">
-                <Activity className="h-3.5 w-3.5 text-[#2563eb]" />
-                {imported?.challenge.title ?? "Python sonucu bekleniyor"}
-              </div>
+            <div className="absolute bottom-4 right-4 z-20 w-[320px]">
+              <StatusToast
+                title={imported?.challenge.title ?? "Python sonucu bekleniyor"}
+                icon={<Activity className="h-3.5 w-3.5" />}
+              >
               <div>{selectionSummary(activeSelection, imported?.trace ?? null)}</div>
               {importError && <div className="mt-1 text-[#b91c1c]">{importError}</div>}
               {imported && (
@@ -237,6 +241,7 @@ export function AiCodeLabWorkspace() {
                   {imported.network.getLayerSizes().join(" -> ")}
                 </div>
               )}
+              </StatusToast>
             </div>
 
             {imported && (
@@ -257,19 +262,6 @@ export function AiCodeLabWorkspace() {
           </section>
         </div>
       </div>
-    </main>
-  );
-}
-
-function HeaderMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-24 rounded-md border border-[#dbe3ee] bg-[#fbfdff] px-3 py-1">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
-        {label}
-      </div>
-      <div className="max-w-44 truncate text-sm font-semibold" title={value}>
-        {value}
-      </div>
-    </div>
+    </WorkbenchShell>
   );
 }

@@ -67,6 +67,14 @@ import { ModelSurface3D } from "@/components/lab/canvas/ModelSurface3D";
 import { StepExplorer } from "@/components/lab/StepExplorer";
 import { ConceptBrowser, ConceptDrawer } from "@/components/lab/concepts/ConceptDrawer";
 import { useConceptDrawer } from "@/components/lab/hooks/useConceptDrawer";
+import {
+  DrawerPanel,
+  IconToolbar,
+  MetricStrip,
+  PanelTabs,
+  StatusToast,
+  WorkbenchShell,
+} from "@/components/lab/ui/Workbench";
 import { buildEpochTraceRecord, type EpochTraceRecord } from "@/lib/ml/trace";
 import type { ConceptMode, DatasetMetadata, VisualizationMode } from "@/lib/ml/lab-types";
 import { lessonsForTask } from "@/lib/ml/lessons";
@@ -421,8 +429,8 @@ export function SandboxApp({ initialView = "network" }: SandboxAppProps) {
   const accuracy = labTask.outputType === "classification" ? model.network.evaluateAccuracy(data) : null;
 
   return (
-    <main className="h-screen min-h-[720px] min-w-[1280px] overflow-hidden bg-[#f5f7fb] text-[#18202f]">
-      <div className="grid h-full grid-cols-[320px_minmax(0,1fr)_380px] grid-rows-[60px_minmax(0,1fr)_224px] gap-px bg-[#d7dde8]">
+    <WorkbenchShell minWidth={1280}>
+      <div className="grid h-full grid-cols-[300px_minmax(0,1fr)_340px] grid-rows-[56px_minmax(0,1fr)_176px] gap-px bg-[#d7dde8]">
         <AppHeader
           task={labTask}
           epoch={model.epoch}
@@ -498,10 +506,10 @@ export function SandboxApp({ initialView = "network" }: SandboxAppProps) {
               onOpenDetail={setDetailSelection}
             />
           )}
-          <div className="absolute right-5 top-5 z-20 flex rounded-md border border-[#cbd5e1] bg-white/90 p-1 shadow-sm backdrop-blur">
+          <IconToolbar className="absolute right-4 top-4 z-20" label="Canvas görünümü">
             <button
               type="button"
-              className={`inline-flex h-8 items-center gap-2 rounded px-3 text-xs font-semibold ${
+              className={`inline-flex h-7 items-center gap-1.5 rounded px-2.5 text-[11px] font-semibold ${
                 canvasView === "network" ? "bg-[#2563eb] text-white" : "text-[#334155] hover:bg-[#eef4ff]"
               }`}
               onPointerDown={() => setCanvasView("network")}
@@ -512,7 +520,7 @@ export function SandboxApp({ initialView = "network" }: SandboxAppProps) {
             </button>
             <button
               type="button"
-              className={`inline-flex h-8 items-center gap-2 rounded px-3 text-xs font-semibold ${
+              className={`inline-flex h-7 items-center gap-1.5 rounded px-2.5 text-[11px] font-semibold ${
                 canvasView === "surface3d" ? "bg-[#2563eb] text-white" : "text-[#334155] hover:bg-[#eef4ff]"
               }`}
               onPointerDown={() => setCanvasView("surface3d")}
@@ -521,7 +529,7 @@ export function SandboxApp({ initialView = "network" }: SandboxAppProps) {
               <Box className="h-4 w-4" />
               3D
             </button>
-          </div>
+          </IconToolbar>
         </section>
 
         <InspectorPanel
@@ -581,7 +589,7 @@ export function SandboxApp({ initialView = "network" }: SandboxAppProps) {
           onClose={closeConcept}
         />
       </div>
-    </main>
+    </WorkbenchShell>
   );
 }
 
@@ -608,53 +616,59 @@ function AppHeader({
   onVisualizationModeChange: (mode: VisualizationMode) => void;
   onToggleFocus: () => void;
 }) {
+  const metrics = [
+    { label: "Epoch", value: String(epoch) },
+    { label: "Loss", value: formatNumber(loss, 5) },
+    ...(accuracy !== null
+      ? [{ label: "Doğruluk", value: `${formatNumber(accuracy * 100, 1)}%`, tone: "good" as const }]
+      : []),
+  ];
+
   return (
-    <header className="col-span-3 flex items-center justify-between bg-white px-5">
-      <div className="flex min-w-0 items-center gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[#e8f0ff] text-[#2563eb]">
-          <BrainCircuit className="h-5 w-5" />
+    <header className="col-span-3 flex h-full items-center justify-between bg-white px-4">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#e8f0ff] text-[#2563eb]">
+          <BrainCircuit className="h-[18px] w-[18px]" />
         </div>
         <div className="min-w-0">
-          <div className="truncate text-base font-semibold">Görsel Sinir Ağı Sandbox</div>
-          <div className="truncate text-xs text-[#607089]">
-            {task.name} · {task.description}
-          </div>
+          <div className="truncate text-sm font-semibold">Görsel Sinir Ağı Sandbox</div>
+          <div className="truncate text-[11px] text-[#607089]">{task.name}</div>
         </div>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <MetricStrip items={metrics} />
         <Link
           href="/code-lab"
-          className="inline-flex h-9 items-center gap-2 rounded-md border border-[#cbd5e1] bg-white px-3 text-xs font-semibold text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-[#cbd5e1] bg-white px-2.5 text-xs font-semibold text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
         >
           <Code2 className="h-4 w-4" />
           Kod Labı
         </Link>
-        <HeaderMetric label="Epoch" value={String(epoch)} />
-        <HeaderMetric label="Loss" value={formatNumber(loss, 5)} />
-        {accuracy !== null && <HeaderMetric label="Doğruluk" value={`${formatNumber(accuracy * 100, 1)}%`} />}
-        <select
-          className="h-9 rounded-md border border-[#cbd5e1] bg-white px-2 text-xs font-semibold text-[#334155]"
-          value={conceptMode}
-          onChange={(event) => onConceptModeChange(event.target.value as ConceptMode)}
-          aria-label="Açıklama modu"
-        >
-          <option value="beginner">Başlangıç</option>
-          <option value="math">Matematik</option>
-          <option value="engineer">Mühendis</option>
-        </select>
-        <select
-          className="h-9 rounded-md border border-[#cbd5e1] bg-white px-2 text-xs font-semibold text-[#334155]"
-          value={visualizationMode}
-          onChange={(event) => onVisualizationModeChange(event.target.value as VisualizationMode)}
-          aria-label="Canvas görselleştirme modu"
-        >
-          <option value="weights">Ağırlık</option>
-          <option value="gradients">Gradient</option>
-          <option value="corrections">Düzeltme</option>
-        </select>
+        <IconToolbar label="Sandbox ayarları" className="shrink-0">
+          <select
+            className="h-7 rounded border-0 bg-transparent px-1.5 text-[11px] font-semibold text-[#334155] outline-none"
+            value={conceptMode}
+            onChange={(event) => onConceptModeChange(event.target.value as ConceptMode)}
+            aria-label="Açıklama modu"
+          >
+            <option value="beginner">Başlangıç</option>
+            <option value="math">Matematik</option>
+            <option value="engineer">Mühendis</option>
+          </select>
+          <select
+            className="h-7 rounded border-0 bg-transparent px-1.5 text-[11px] font-semibold text-[#334155] outline-none"
+            value={visualizationMode}
+            onChange={(event) => onVisualizationModeChange(event.target.value as VisualizationMode)}
+            aria-label="Canvas görselleştirme modu"
+          >
+            <option value="weights">Ağırlık</option>
+            <option value="gradients">Gradient</option>
+            <option value="corrections">Düzeltme</option>
+          </select>
+        </IconToolbar>
         <button
           type="button"
-          className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-semibold ${
+          className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs font-semibold ${
             focusMode
               ? "border-[#2563eb] bg-[#2563eb] text-white"
               : "border-[#cbd5e1] bg-white text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
@@ -662,21 +676,10 @@ function AppHeader({
           onClick={onToggleFocus}
         >
           <Eye className="h-4 w-4" />
-          Yakın Bakış
+          Odak
         </button>
       </div>
     </header>
-  );
-}
-
-function HeaderMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-24 rounded-md border border-[#dbe3ee] bg-[#fbfdff] px-3 py-1">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
-        {label}
-      </div>
-      <div className="text-sm font-semibold">{value}</div>
-    </div>
   );
 }
 
@@ -717,11 +720,11 @@ function ArchitecturePanel({
   };
 
   return (
-    <aside className="min-h-0 overflow-hidden bg-white">
-      <div className="border-b border-[#e2e8f0] px-4 py-4">
-        <PanelTitle icon={<Sigma className="h-5 w-5" />} title="Lab Kurulumu" />
-        <SegmentedControl
-          className="mt-4"
+    <aside className="flex min-h-0 flex-col overflow-hidden bg-white">
+      <div className="border-b border-[#e2e8f0] px-3 py-3">
+        <PanelTitle icon={<Sigma className="h-4 w-4" />} title="Lab Kurulumu" compact />
+        <PanelTabs
+          className="mt-3"
           items={[
             { id: "task", label: "Görev" },
             { id: "layers", label: "Mimari" },
@@ -729,19 +732,20 @@ function ArchitecturePanel({
             { id: "concepts", label: "Konsept" },
           ]}
           value={tab}
-          onChange={(value) => setTab(value as typeof tab)}
+          onChange={setTab}
+          compact
         />
       </div>
 
-      <div className="h-[calc(100%-97px)] overflow-y-auto px-4 py-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
         {tab === "task" && (
-          <div className="space-y-4">
+          <div className="space-y-3">
             <label className="block">
               <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
                 Öğrenme görevi
               </span>
               <select
-                className="mt-2 h-10 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold"
+                className="mt-2 h-9 w-full rounded-md border border-[#cbd5e1] bg-white px-2.5 text-xs font-semibold"
                 value={taskId}
                 onChange={(event) => onTaskChange(event.target.value as TaskId)}
               >
@@ -753,10 +757,12 @@ function ArchitecturePanel({
               </select>
             </label>
 
-            <div className="rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3 text-sm leading-6 text-[#334155]">
-              <div className="mb-1 font-semibold">{task.name}</div>
+            <DrawerPanel title="Görev açıklaması" summary={task.description}>
+              <div className="text-xs leading-5 text-[#334155]">
+                <div className="mb-1 font-semibold">{task.name}</div>
               {task.explanation}
-            </div>
+              </div>
+            </DrawerPanel>
 
             <div className="grid grid-cols-2 gap-2">
               <Stat label="giriş" value={`${task.inputSize} özellik`} />
@@ -765,11 +771,11 @@ function ArchitecturePanel({
               <Stat label="veri" value={`${task.data.length} örnek`} />
             </div>
 
-            <div className="rounded-md border border-[#dbe3ee] bg-white p-3">
-              <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
-                <SlidersHorizontal className="h-4 w-4 text-[#2563eb]" />
-                Model Preset
-              </div>
+            <DrawerPanel
+              title="Model Preset"
+              icon={<SlidersHorizontal className="h-4 w-4" />}
+              summary={`${presetsForTask(task.id).length} seçenek`}
+            >
               <div className="space-y-2">
                 {presetsForTask(task.id).map((preset) => (
                   <button
@@ -785,7 +791,7 @@ function ArchitecturePanel({
                   </button>
                 ))}
               </div>
-            </div>
+            </DrawerPanel>
           </div>
         )}
 
@@ -1369,7 +1375,7 @@ function InspectorPanel({
   onOpenDetail,
   onOpenConcept,
 }: InspectorPanelProps) {
-  const [tab, setTab] = useState<"inspect" | "data">("inspect");
+  const [tab, setTab] = useState<"inspect" | "data" | "learn">("inspect");
   const neuron =
     selection?.type === "neuron"
       ? trace.neurons.find((item) => item.id === selection.id) ?? null
@@ -1381,21 +1387,23 @@ function InspectorPanel({
 
   return (
     <aside className="flex min-h-0 flex-col overflow-hidden bg-white">
-      <div className="border-b border-[#e2e8f0] px-4 py-4">
-        <PanelTitle icon={<Activity className="h-5 w-5" />} title="Denetçi" />
-        <SegmentedControl
-          className="mt-4"
+      <div className="border-b border-[#e2e8f0] px-3 py-3">
+        <PanelTitle icon={<Activity className="h-4 w-4" />} title="Denetçi" compact />
+        <PanelTabs
+          className="mt-3"
           items={[
-            { id: "inspect", label: "Hesap" },
+            { id: "inspect", label: "Inspect" },
             { id: "data", label: "Veri" },
+            { id: "learn", label: "Learn" },
           ]}
           value={tab}
-          onChange={(value) => setTab(value as typeof tab)}
+          onChange={setTab}
+          compact
         />
       </div>
 
       {tab === "inspect" ? (
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
           {selection && (
             <button
               type="button"
@@ -1410,8 +1418,8 @@ function InspectorPanel({
           {edge && <EdgeInspector edge={edge} conceptMode={conceptMode} onOpenConcept={onOpenConcept} />}
           {!neuron && !edge && <TraceSummary task={task} trace={trace} conceptMode={conceptMode} onOpenConcept={onOpenConcept} />}
         </div>
-      ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+      ) : tab === "data" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
           <DatasetPanel
             task={task}
             network={network}
@@ -1424,6 +1432,15 @@ function InspectorPanel({
             onAddImageExample={onAddImageExample}
             onApplyNlpDataset={onApplyNlpDataset}
           />
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+          <div className="space-y-3">
+            <LearningGuide task={task} onOpenConcept={onOpenConcept} />
+            <DrawerPanel title="Konsept Kütüphanesi" defaultOpen>
+              <ConceptBrowser onOpenConcept={onOpenConcept} />
+            </DrawerPanel>
+          </div>
         </div>
       )}
     </aside>
@@ -1527,96 +1544,30 @@ function CanvasFocusPanel({
   const neuron =
     selection?.type === "neuron" ? trace.neurons.find((item) => item.id === selection.id) ?? null : null;
   if (!selection || !neuron) return null;
-  const outgoing = outgoingSignals(trace, neuron).slice(0, 5);
-  const incoming = [...neuron.incoming].sort((a, b) => Math.abs(b.product) - Math.abs(a.product)).slice(0, 4);
 
   return (
-    <div className="absolute left-4 top-4 z-20 w-[360px] rounded-lg border border-[#cbd5e1] bg-white/95 p-4 shadow-xl backdrop-blur">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-sm font-semibold text-[#18202f]">
-            Odak: L{neuron.layerIndex} N{neuron.neuronIndex}
-          </div>
-          <div className="mt-0.5 text-xs text-[#64748b]">{activationLabel(neuron.activation)}</div>
-        </div>
-        <button
-          type="button"
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[#cbd5e1] text-[#334155] hover:border-[#ef4444] hover:text-[#b91c1c]"
-          onClick={onClose}
-          aria-label="Odak panelini kapat"
-        >
-          ×
-        </button>
-      </div>
-
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <Stat label="z toplam" value={formatNumber(neuron.z, 4)} />
-        <Stat label="a çıktı" value={formatNumber(neuron.value, 4)} />
-        <Stat label="δ hata" value={formatNumber(neuron.delta, 4)} />
-      </div>
-
-      <div className="mt-3 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
-          Bu nöronun hesabı
-        </div>
-        <div className="mt-2 space-y-1 font-mono text-[11px] leading-5 text-[#334155]">
-          <div className="break-words">{neuron.formula}</div>
-          <div>a = {neuron.activation}(z) = {formatNumber(neuron.value, 6)}</div>
-        </div>
-      </div>
-
-      {incoming.length > 0 && (
-        <div className="mt-3 rounded-md border border-[#dbe3ee] bg-white">
-          <div className="border-b border-[#edf2f7] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
-            En büyük gelen terimler
-          </div>
-          {incoming.map((item) => (
-            <div key={`${item.fromNeuronId}-${neuron.id}`} className="grid grid-cols-[1fr_auto] gap-2 px-3 py-1.5 text-[11px]">
-              <span className="font-medium text-[#334155]">{item.fromNeuronId}</span>
-              <span className="font-mono text-[#64748b]">
-                {formatNumber(item.inputValue, 3)}×{formatNumber(item.weight, 3)}={formatNumber(item.product, 3)}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="mt-3 rounded-md border border-[#dbe3ee] bg-white">
-        <div className="border-b border-[#edf2f7] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#64748b]">
-          Sonraki katmana gönderilen sinyal
-        </div>
-        {outgoing.length === 0 ? (
-          <div className="px-3 py-2 text-xs leading-5 text-[#526070]">
-            Bu output nöronu; sinyal artık loss hesabına gider.
-          </div>
-        ) : (
-          outgoing.map(({ edge, toNeuron }) => (
-            <div key={edge.id} className="px-3 py-2 text-[11px] leading-5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-[#334155]">
-                  → L{edge.toLayerIndex} N{edge.toNeuronIndex}
-                </span>
-                <span className="font-mono text-[#64748b]">
-                  a×w={formatNumber(edge.contribution, 4)}
-                </span>
-              </div>
-              <div className="font-mono text-[#64748b]">
-                {formatNumber(neuron.value, 4)} × {formatNumber(edge.weightBefore, 4)}
-                {toNeuron ? ` · hedef nöron z=${formatNumber(toNeuron.z, 4)}` : ""}
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-
-      <button
-        type="button"
-        className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-[#2563eb] px-3 text-xs font-semibold text-white hover:bg-[#1d4ed8]"
-        onClick={() => onOpenDetail(selection)}
+    <div className="absolute bottom-4 left-4 z-20 w-[320px]">
+      <StatusToast
+        title={`Odak: L${neuron.layerIndex} N${neuron.neuronIndex}`}
+        icon={<MousePointerClick className="h-4 w-4" />}
+        onClose={onClose}
+        action={
+          <button
+            type="button"
+            className="inline-flex h-8 w-full items-center justify-center gap-2 rounded-md bg-[#2563eb] px-3 text-[11px] font-semibold text-white hover:bg-[#1d4ed8]"
+            onClick={() => onOpenDetail(selection)}
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+            Tam hesap
+          </button>
+        }
       >
-        <Maximize2 className="h-4 w-4" />
-        Tam hesap penceresini aç
-      </button>
+        <div className="grid grid-cols-3 gap-1.5">
+          <Stat label="z" value={formatNumber(neuron.z, 3)} />
+          <Stat label="a" value={formatNumber(neuron.value, 3)} />
+          <Stat label="δ" value={formatNumber(neuron.delta, 3)} />
+        </div>
+      </StatusToast>
     </div>
   );
 }
@@ -2563,9 +2514,11 @@ function TrainingPanel({
   onToggleRun,
   onReset
 }: TrainingPanelProps) {
+  const [tab, setTab] = useState<"loss" | "step" | "lr">("loss");
+
   return (
-    <section className="col-span-3 grid min-h-0 grid-cols-[284px_360px_260px_minmax(0,1fr)] gap-px bg-[#d7dde8]">
-      <div className="min-h-0 overflow-y-auto bg-white px-4 py-3">
+    <section className="col-span-3 grid min-h-0 grid-cols-[292px_minmax(0,1fr)] gap-px bg-[#d7dde8]">
+      <div className="min-h-0 overflow-y-auto bg-white px-3 py-3">
         <PanelTitle icon={<Zap className="h-5 w-5" />} title="Eğitim" compact />
         <div className="mt-2 flex items-center gap-2">
           <ActionButton icon={<StepForward className="h-4 w-4" />} label="1 Epoch" onClick={onStep} />
@@ -2600,35 +2553,48 @@ function TrainingPanel({
         </div>
       </div>
 
-      <div className="min-h-0 overflow-hidden bg-white px-4 py-3">
-        <div className="mb-3 flex items-center justify-between">
-          <PanelTitle icon={<BarChart3 className="h-5 w-5" />} title="Loss Grafiği" compact />
+      <div className="flex min-h-0 flex-col overflow-hidden bg-white px-3 py-3">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <PanelTabs
+            className="w-[420px] max-w-full"
+            compact
+            items={[
+              { id: "loss", label: "Loss", icon: <BarChart3 className="h-3.5 w-3.5" /> },
+              { id: "step", label: "Adım", icon: <Waves className="h-3.5 w-3.5" /> },
+              { id: "lr", label: "LR Deneyi", icon: <FlaskConical className="h-3.5 w-3.5" /> },
+            ]}
+            value={tab}
+            onChange={setTab}
+          />
           <div className="text-xs font-semibold text-[#64748b]">
             {formatNumber(lossHistory.at(-1) ?? 0, 6)}
           </div>
         </div>
-        <LossChart values={lossHistory} />
-      </div>
 
-      <div className="min-h-0 overflow-hidden bg-white px-4 py-3">
-        <PanelTitle icon={<Waves className="h-5 w-5" />} title="Adım Mikroskobu" compact />
-        <StepExplorer
-          task={task}
-          trace={trace}
-          history={history}
-          learningRate={learningRate}
-          conceptMode={conceptMode}
-          onSelectTarget={onSelectTarget}
-          onPhaseChange={onPhaseChange}
-          onOpenConcept={onOpenConcept}
-        />
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {tab === "loss" && <LossChart values={lossHistory} />}
+          {tab === "step" && (
+            <StepExplorer
+              task={task}
+              trace={trace}
+              history={history}
+              learningRate={learningRate}
+              conceptMode={conceptMode}
+              onSelectTarget={onSelectTarget}
+              onPhaseChange={onPhaseChange}
+              onOpenConcept={onOpenConcept}
+            />
+          )}
+          {tab === "lr" && (
+            <LearningRateExperiment
+              network={network}
+              data={data}
+              currentRate={learningRate}
+              onApply={onLearningRateChange}
+            />
+          )}
+        </div>
       </div>
-      <LearningRateExperiment
-        network={network}
-        data={data}
-        currentRate={learningRate}
-        onApply={onLearningRateChange}
-      />
     </section>
   );
 }
@@ -2712,7 +2678,7 @@ function LearningRateExperiment({
   const maxLoss = Math.max(0.001, ...trials.map((trial) => trial.lossAfter));
 
   return (
-    <div className="min-h-0 overflow-y-auto bg-white px-4 py-3">
+    <div className="min-h-0 overflow-y-auto bg-white">
       <PanelTitle icon={<FlaskConical className="h-5 w-5" />} title="LR Deneyi" compact />
       <div className="mt-2 rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-2 text-[11px] leading-5 text-[#526070]">
         Model kopyalanır, 1 epoch simüle edilir; gerçek ağırlıklar değişmez.
@@ -2870,37 +2836,6 @@ function PanelTitle({
   );
 }
 
-function SegmentedControl({
-  items,
-  value,
-  onChange,
-  className = "",
-}: {
-  items: Array<{ id: string; label: string }>;
-  value: string;
-  onChange: (value: string) => void;
-  className?: string;
-}) {
-  return (
-    <div className={`grid rounded-md border border-[#dbe3ee] bg-[#f8fafc] p-1 ${className}`} style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
-      {items.map((item) => (
-        <button
-          key={item.id}
-          type="button"
-          className={`h-8 rounded-[5px] px-2 text-xs font-semibold transition ${
-            value === item.id
-              ? "bg-white text-[#18202f] shadow-sm"
-              : "text-[#64748b] hover:text-[#2563eb]"
-          }`}
-          onClick={() => onChange(item.id)}
-        >
-          {item.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 rounded-md border border-[#dbe3ee] bg-[#fbfdff] px-3 py-2">
@@ -2914,12 +2849,9 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function FormulaBox({ title, lines }: { title: string; lines: string[] }) {
+function FormulaBox({ title, lines, defaultOpen = false }: { title: string; lines: string[]; defaultOpen?: boolean }) {
   return (
-    <div className="rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3">
-      <div className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
-        {title}
-      </div>
+    <DrawerPanel title={title} defaultOpen={defaultOpen} className="bg-[#fbfdff]">
       <div className="space-y-1 font-mono text-xs text-[#334155]">
         {lines.map((item) => (
           <div key={item} className="break-words">
@@ -2927,16 +2859,15 @@ function FormulaBox({ title, lines }: { title: string; lines: string[] }) {
           </div>
         ))}
       </div>
-    </div>
+    </DrawerPanel>
   );
 }
 
 function ExplainBox({ title, text }: { title: string; text: string }) {
   return (
-    <div className="rounded-md border border-[#dbe3ee] bg-white p-3">
-      <div className="text-xs font-semibold text-[#18202f]">{title}</div>
+    <DrawerPanel title={title}>
       <div className="mt-1 text-xs leading-5 text-[#526070]">{text}</div>
-    </div>
+    </DrawerPanel>
   );
 }
 

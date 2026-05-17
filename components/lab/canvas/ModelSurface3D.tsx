@@ -548,13 +548,7 @@ export function ModelSurface3D({
   const selectedEdge = activeSelection?.type === "edge"
     ? trace.edges.find((edge) => edge.id === activeSelection.id)
     : null;
-  const summary = useMemo(() => {
-    if (activeMode === "architecture") {
-      return "2D ağın 3D karşılığı: nöronlar tıklanabilir, çizgiler seçili metriğe göre renklenir, epoch sırasında sinyal dalgaları akar.";
-    }
-    if (task.inputSize === 1) return "Turuncu noktalar veri, yeşil çizgi modelin öğrendiği fonksiyon.";
-    return "Renk sınıfı, yükseklik modelin o bölgede ne kadar emin olduğunu gösterir.";
-  }, [activeMode, task.inputSize]);
+  const sceneLabel = activeMode === "architecture" ? "Ağ mimarisi" : "Karar yüzeyi";
 
   const resetCamera = () => {
     const camera = cameraRef.current;
@@ -873,15 +867,17 @@ export function ModelSurface3D({
       } overflow-hidden bg-[#f8fbff]`}
     >
       <div ref={hostRef} className="h-full w-full" data-testid="model-surface-3d" />
-      <div className="pointer-events-none absolute left-5 top-5 max-w-[470px] rounded-md border border-white/70 bg-white/90 px-4 py-3 shadow-sm backdrop-blur">
-        <div className="text-sm font-semibold text-[#18202f]">3D Model Simülasyonu</div>
-        <div className="mt-1 text-xs leading-5 text-[#526070]">{summary}</div>
+      <div className="pointer-events-none absolute left-4 top-4 max-w-[320px] rounded-md border border-white/70 bg-white/90 px-3 py-2 shadow-sm backdrop-blur">
+        <div className="text-xs font-semibold text-[#18202f]">3D Simülasyon</div>
+        <div className="mt-0.5 truncate text-[11px] leading-4 text-[#526070]">
+          {sceneLabel} · {network.getLayerSizes().join(" -> ")}
+        </div>
       </div>
-      <div className="absolute right-5 top-5 flex flex-col items-end gap-2">
+      <div className="absolute right-4 top-4 flex flex-col items-end gap-1.5">
         <div className="flex rounded-md border border-[#cbd5e1] bg-white/90 p-1 shadow-sm backdrop-blur">
           <button
             type="button"
-            className={`h-8 rounded px-3 text-xs font-semibold ${
+            className={`h-7 rounded px-2.5 text-[11px] font-semibold ${
               activeMode === "architecture" ? "bg-[#2563eb] text-white" : "text-[#334155] hover:bg-[#eef4ff]"
             }`}
             onClick={() => setMode("architecture")}
@@ -890,7 +886,7 @@ export function ModelSurface3D({
           </button>
           <button
             type="button"
-            className={`h-8 rounded px-3 text-xs font-semibold ${
+            className={`h-7 rounded px-2.5 text-[11px] font-semibold ${
               activeMode === "surface" ? "bg-[#2563eb] text-white" : "text-[#334155] hover:bg-[#eef4ff]"
             }`}
             disabled={!canShowSurface}
@@ -902,7 +898,7 @@ export function ModelSurface3D({
         <div className="flex rounded-md border border-[#cbd5e1] bg-white/90 p-1 shadow-sm backdrop-blur">
           <button
             type="button"
-            className="grid h-9 w-9 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
+            className="grid h-8 w-8 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
             title="Yakınlaş"
             aria-label="3D sahneye yakınlaş"
             onClick={() => zoomCamera(0.82)}
@@ -911,7 +907,7 @@ export function ModelSurface3D({
           </button>
           <button
             type="button"
-            className="grid h-9 w-9 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
+            className="grid h-8 w-8 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
             title="Uzaklaş"
             aria-label="3D sahneden uzaklaş"
             onClick={() => zoomCamera(1.18)}
@@ -920,7 +916,7 @@ export function ModelSurface3D({
           </button>
           <button
             type="button"
-            className="grid h-9 w-9 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
+            className="grid h-8 w-8 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
             title="Kamerayı sıfırla"
             aria-label="3D kamerayı sıfırla"
             onClick={resetCamera}
@@ -929,7 +925,7 @@ export function ModelSurface3D({
           </button>
           <button
             type="button"
-            className="grid h-9 w-9 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
+            className="grid h-8 w-8 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
             title={isFullscreen ? "Tam ekrandan çık" : "Tam ekran"}
             aria-label={isFullscreen ? "3D tam ekrandan çık" : "3D tam ekran aç"}
             onClick={() => setIsFullscreen((value) => !value)}
@@ -938,21 +934,22 @@ export function ModelSurface3D({
           </button>
         </div>
       </div>
-      <div className="pointer-events-none absolute bottom-5 left-5 max-w-[420px] rounded-md border border-white/70 bg-white/[0.92] px-3 py-2 text-[11px] leading-5 text-[#526070] shadow-sm backdrop-blur">
-        <div className="font-semibold text-[#18202f]">Sahne Kontrolü</div>
-        <div>Sürükle: döndür · Tekerlek: zoom · Sağ sürükle: pan</div>
+      <div className="pointer-events-none absolute bottom-4 left-4 max-w-[300px] rounded-md border border-white/70 bg-white/[0.9] px-3 py-2 text-[11px] leading-4 text-[#526070] shadow-sm backdrop-blur">
+        <div className="font-semibold text-[#18202f]">Sahne</div>
         <div>Faz: {phase} · loss {formatNumber(network.evaluateLoss(data), 5)}</div>
       </div>
-      <div className="pointer-events-none absolute bottom-5 right-5 w-[min(390px,calc(100%-2.5rem))] rounded-md border border-[#dbe5f1] bg-white/[0.95] p-4 text-xs leading-5 text-[#526070] shadow-lg backdrop-blur">
+      <div className="pointer-events-auto absolute bottom-4 right-4 w-[min(320px,calc(100%-2rem))] rounded-md border border-[#dbe5f1] bg-white/[0.94] p-3 text-xs leading-5 text-[#526070] shadow-sm backdrop-blur">
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#64748b]">Odak Mikroskobu</div>
-            <div className="mt-1 text-sm font-semibold text-[#18202f]">{selectionTitle(activeSelection)}</div>
+          <div className="min-w-0">
+            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#64748b]">Odak</div>
+            <div className="mt-0.5 truncate text-sm font-semibold text-[#18202f]">
+              {selectionTitle(activeSelection)}
+            </div>
           </div>
           {activeSelection ? (
             <button
               type="button"
-              className="pointer-events-auto rounded border border-[#cbd5e1] px-2 py-1 text-[11px] font-semibold text-[#334155] hover:bg-[#eef4ff]"
+              className="rounded border border-[#cbd5e1] px-2 py-1 text-[11px] font-semibold text-[#334155] hover:bg-[#eef4ff]"
               onClick={() => onOpenDetail(activeSelection)}
             >
               Detay
@@ -960,28 +957,28 @@ export function ModelSurface3D({
           ) : null}
         </div>
         {selectedNeuron ? (
-          <div className="mt-3 space-y-3">
-            <div className="rounded border border-[#e2e8f0] bg-[#f8fafc] p-3 font-mono text-[11px] text-[#18202f]">
-              {selectedNeuron.layerKind === "input" ? "x" : "z"} = {selectedNeuron.formula}
-            </div>
+          <div className="mt-2 space-y-2">
             <div className="grid grid-cols-2 gap-2">
-              <div className="rounded border border-[#e2e8f0] p-2">
-                <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">Aktivasyon</div>
+              <div className="rounded border border-[#e2e8f0] bg-[#f8fafc] p-2">
+                <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#64748b]">Aktivasyon</div>
                 <div className="mt-1 font-semibold text-[#18202f]">
                   a = {formatNumber(selectedNeuron.value, 5)}
                 </div>
               </div>
-              <div className="rounded border border-[#e2e8f0] p-2">
-                <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">Türev / Delta</div>
+              <div className="rounded border border-[#e2e8f0] bg-[#f8fafc] p-2">
+                <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#64748b]">Delta</div>
                 <div className="mt-1 font-semibold text-[#18202f]">
-                  {formatNumber(selectedNeuron.derivative, 5)} / {formatNumber(selectedNeuron.delta, 5)}
+                  δ = {formatNumber(selectedNeuron.delta, 5)}
                 </div>
               </div>
             </div>
-            {selectedNeuron.incoming.length > 0 ? (
-              <div className="space-y-1">
-                <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">
-                  Gelen katkılar
+            <details className="rounded border border-[#e2e8f0] bg-white">
+              <summary className="cursor-pointer px-2 py-1.5 text-[11px] font-semibold text-[#2563eb]">
+                Denklem ve katkılar
+              </summary>
+              <div className="space-y-2 border-t border-[#edf2f7] p-2">
+                <div className="break-words rounded bg-[#f8fafc] p-2 font-mono text-[11px] text-[#18202f]">
+                  {selectedNeuron.layerKind === "input" ? "x" : "z"} = {selectedNeuron.formula}
                 </div>
                 {selectedNeuron.incoming.slice(0, 4).map((item, index) => (
                   <div
@@ -995,34 +992,40 @@ export function ModelSurface3D({
                   </div>
                 ))}
               </div>
-            ) : null}
+            </details>
           </div>
         ) : selectedEdge ? (
-          <div className="mt-3 space-y-3">
-            <div className="rounded border border-[#e2e8f0] bg-[#f8fafc] p-3 font-mono text-[11px] text-[#18202f]">
-              katkı = a(prev) x w = {formatNumber(selectedEdge.contribution, 5)}
-            </div>
+          <div className="mt-2 space-y-2">
             <div className="grid grid-cols-2 gap-2">
-              <div className="rounded border border-[#e2e8f0] p-2">
-                <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">Ağırlık</div>
+              <div className="rounded border border-[#e2e8f0] bg-[#f8fafc] p-2">
+                <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#64748b]">Ağırlık</div>
                 <div className="mt-1 font-semibold text-[#18202f]">
                   {formatNumber(selectedEdge.weightBefore, 5)} → {formatNumber(selectedEdge.weightAfter, 5)}
                 </div>
               </div>
-              <div className="rounded border border-[#e2e8f0] p-2">
-                <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">Gradient</div>
+              <div className="rounded border border-[#e2e8f0] bg-[#f8fafc] p-2">
+                <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#64748b]">Gradient</div>
                 <div className="mt-1 font-semibold text-[#18202f]">{formatNumber(selectedEdge.gradient, 5)}</div>
               </div>
             </div>
-            <div className="rounded border border-[#fed7aa] bg-[#fff7ed] px-3 py-2 text-[#9a3412]">
-              Düzeltme etkisi: {formatNumber(selectedEdge.correction, 5)} · hata sinyali{" "}
-              {formatNumber(selectedEdge.errorSignal, 5)}
-            </div>
+            <details className="rounded border border-[#e2e8f0] bg-white">
+              <summary className="cursor-pointer px-2 py-1.5 text-[11px] font-semibold text-[#2563eb]">
+                Katkı hesabı
+              </summary>
+              <div className="space-y-2 border-t border-[#edf2f7] p-2">
+                <div className="rounded bg-[#f8fafc] p-2 font-mono text-[11px] text-[#18202f]">
+                  katkı = a(prev) x w = {formatNumber(selectedEdge.contribution, 5)}
+                </div>
+                <div className="rounded border border-[#fed7aa] bg-[#fff7ed] px-3 py-2 text-[#9a3412]">
+                  Düzeltme: {formatNumber(selectedEdge.correction, 5)} · hata{" "}
+                  {formatNumber(selectedEdge.errorSignal, 5)}
+                </div>
+              </div>
+            </details>
           </div>
         ) : (
-          <div className="mt-3 rounded border border-[#e2e8f0] bg-[#f8fafc] p-3">
-            Bir nöron veya bağlantıya tıklayınca burada denklemi, değerleri ve sonraki katmana giden etkiyi
-            okuyabilirsin. Çift tık aynı hesabı büyük matematik modalında açar.
+          <div className="mt-2 rounded border border-[#e2e8f0] bg-[#f8fafc] px-2 py-1.5 text-[11px]">
+            Nöron veya bağlantı seçince hesap özeti burada görünür.
           </div>
         )}
       </div>
