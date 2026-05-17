@@ -2,75 +2,63 @@
 
 import {
   AlertTriangle,
-  BrainCircuit,
   CheckCircle2,
   Code2,
   Cpu,
-  FlaskConical,
-  Gamepad2,
   Layers3,
   Play,
   RotateCcw,
+  Sparkles,
   UploadCloud,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
-  AI_CODE_LAB_CHALLENGES,
-  type AiCodeLabChallenge,
-  type CodeLabTrack,
   type PythonLabResult,
   type PythonLabRunResponse,
 } from "@/lib/ml/code-lab";
+import { CurriculumPanel } from "@/components/lab/curriculum/CurriculumPanel";
 import { formatNumber } from "@/lib/ml/network";
 import { CompactPanel, DrawerPanel, PanelTabs } from "@/components/lab/ui/Workbench";
-
-const trackMeta: Record<CodeLabTrack, { label: string; icon: React.ReactNode }> = {
-  "core-ml": { label: "ML", icon: <FlaskConical className="h-3.5 w-3.5" /> },
-  "deep-learning": { label: "Deep", icon: <BrainCircuit className="h-3.5 w-3.5" /> },
-  reinforcement: { label: "RL", icon: <Gamepad2 className="h-3.5 w-3.5" /> },
-};
-
-const difficultyClass: Record<AiCodeLabChallenge["difficulty"], string> = {
-  kolay: "border-[#10b981] bg-[#ecfdf5] text-[#047857]",
-  orta: "border-[#f59e0b] bg-[#fffbeb] text-[#b45309]",
-  zor: "border-[#ef4444] bg-[#fef2f2] text-[#b91c1c]",
-};
+import {
+  completeCurriculumTask,
+  firstAvailableCurriculumTask,
+  getCurriculumTask,
+  isCurriculumTaskUnlocked,
+  normalizeCurriculumProgress,
+} from "@/lib/ml/curriculum";
+import type { CurriculumProgress, CurriculumTask, ModelMetaLayer } from "@/lib/ml/types";
 
 export function AiCodeLab({
   onApplyResult,
   applyLabel = "Ağa Aktar",
+  progress,
+  onProgressChange,
 }: {
-  onApplyResult: (challenge: AiCodeLabChallenge, result: PythonLabResult) => void;
+  onApplyResult: (task: CurriculumTask, result: PythonLabResult) => void;
   applyLabel?: string;
+  progress: CurriculumProgress;
+  onProgressChange: (progress: CurriculumProgress) => void;
 }) {
-  const [track, setTrack] = useState<CodeLabTrack>("core-ml");
-  const visibleChallenges = useMemo(
-    () => AI_CODE_LAB_CHALLENGES.filter((challenge) => challenge.track === track),
-    [track]
-  );
-  const [selectedId, setSelectedId] = useState(AI_CODE_LAB_CHALLENGES[0].id);
-  const selected =
-    AI_CODE_LAB_CHALLENGES.find((challenge) => challenge.id === selectedId) ?? AI_CODE_LAB_CHALLENGES[0];
-  const [code, setCode] = useState(AI_CODE_LAB_CHALLENGES[0].starterCode);
+  const safeProgress = normalizeCurriculumProgress(progress);
+  const [selectedId, setSelectedId] = useState(() => firstAvailableCurriculumTask(safeProgress).id);
+  const selected = getCurriculumTask(selectedId) ?? firstAvailableCurriculumTask(safeProgress);
+  const [code, setCode] = useState(selected.starterCode);
   const [running, setRunning] = useState(false);
   const [response, setResponse] = useState<PythonLabRunResponse | null>(null);
+  const [celebration, setCelebration] = useState<string[] | null>(null);
 
-  const selectChallenge = (challenge: AiCodeLabChallenge) => {
-    setSelectedId(challenge.id);
-    setCode(challenge.starterCode);
+  const selectTask = (task: CurriculumTask) => {
+    if (!isCurriculumTaskUnlocked(task, safeProgress)) return;
+    setSelectedId(task.id);
+    setCode(task.starterCode);
     setResponse(null);
-  };
-
-  const selectTrack = (nextTrack: CodeLabTrack) => {
-    setTrack(nextTrack);
-    selectChallenge(
-      AI_CODE_LAB_CHALLENGES.find((challenge) => challenge.track === nextTrack) ?? AI_CODE_LAB_CHALLENGES[0]
-    );
+    setCelebration(null);
   };
 
   const runCode = async () => {
     setRunning(true);
     setResponse(null);
+    setCelebration(null);
     try {
       const result = await fetch("/api/python-lab", {
         method: "POST",
@@ -79,12 +67,22 @@ export function AiCodeLab({
       });
       const payload = (await result.json()) as PythonLabRunResponse;
       setResponse(payload);
+      if (payload.ok && payload.result) {
+        onApplyResult(selected, payload.result);
+      }
+      if (payload.ok && payload.passed) {
+        const nextProgress = completeCurriculumTask(safeProgress, selected.id);
+        onProgressChange(nextProgress);
+        setCelebration(payload.feedback.length > 0 ? payload.feedback : ["Task passed. Next step unlocked."]);
+      }
     } catch (error) {
       setResponse({
         ok: false,
         stdout: "",
         stderr: "",
         durationMs: 0,
+        passed: false,
+        feedback: ["Python cell could not be reached."],
         error: error instanceof Error ? error.message : "Python hücresi çalıştırılamadı.",
       });
     } finally {
@@ -93,59 +91,19 @@ export function AiCodeLab({
   };
 
   const canApply =
-    selected.applyToNetwork &&
+    Boolean(response?.result?.modelMeta) ||
     Boolean(response?.result?.layers?.length && response.result.weights?.length && response.result.biases?.length);
 
   return (
     <div className="space-y-3">
-      <CompactPanel title="AI Challenge" icon={<Code2 className="h-4 w-4" />} bodyClassName="space-y-2">
-        <PanelTabs
-          compact
-          items={(Object.keys(trackMeta) as CodeLabTrack[]).map((item) => ({
-            id: item,
-            label: trackMeta[item].label,
-            icon: trackMeta[item].icon,
-          }))}
-          value={track}
-          onChange={selectTrack}
-        />
-        <div className="space-y-1.5">
-          {visibleChallenges.map((challenge) => (
-            <button
-              key={challenge.id}
-              type="button"
-              className={`block w-full rounded-md border p-2.5 text-left transition ${
-                selected.id === challenge.id
-                  ? "border-[#2563eb] bg-[#eef4ff]"
-                  : "border-[#dbe3ee] bg-white hover:border-[#2563eb]"
-              }`}
-              onClick={() => selectChallenge(challenge)}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <span className="min-w-0 truncate text-xs font-semibold text-[#18202f]">{challenge.title}</span>
-                <span className={`rounded border px-1.5 py-0.5 text-[10px] font-bold ${difficultyClass[challenge.difficulty]}`}>
-                  {challenge.difficulty}
-                </span>
-              </div>
-              <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-[#526070]">{challenge.summary}</div>
-              <div className="mt-1.5 flex flex-wrap gap-1">
-                {challenge.libraries.map((library) => (
-                  <span key={library} className="rounded border border-[#dbe3ee] bg-[#fbfdff] px-1.5 py-0.5 text-[10px] font-semibold text-[#64748b]">
-                    {library}
-                  </span>
-                ))}
-              </div>
-            </button>
-          ))}
-        </div>
-      </CompactPanel>
+      <CurriculumPanel selectedTaskId={selected.id} progress={safeProgress} onSelectTask={selectTask} />
 
       <DrawerPanel title="Brief" icon={<Cpu className="h-4 w-4" />} summary={selected.title}>
-        <div className="text-[11px] leading-5 text-[#526070]">{selected.prompt}</div>
+        <div className="text-[11px] leading-5 text-[#526070]">{selected.description}</div>
         <div className="mt-2 flex flex-wrap gap-1">
-          {selected.concepts.map((concept) => (
-            <span key={concept} className="rounded-md bg-[#f1f5f9] px-2 py-1 text-[10px] font-semibold text-[#475569]">
-              {concept}
+          {Object.entries(selected.requirements).map(([key, value]) => (
+            <span key={key} className="rounded-md bg-[#f1f5f9] px-2 py-1 text-[10px] font-semibold text-[#475569]">
+              {key}: {Array.isArray(value) ? value.join("x") : String(value)}
             </span>
           ))}
         </div>
@@ -197,6 +155,16 @@ export function AiCodeLab({
         </div>
       </CompactPanel>
 
+      {celebration && (
+        <CompactPanel title="Passed" icon={<Sparkles className="h-4 w-4 text-[#059669]" />} bodyClassName="space-y-1">
+          {celebration.map((item) => (
+            <div key={item} className="rounded-md border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2 text-[11px] leading-5 text-[#166534]">
+              {item}
+            </div>
+          ))}
+        </CompactPanel>
+      )}
+
       {response && <RunResult response={response} challenge={selected} />}
     </div>
   );
@@ -207,12 +175,18 @@ function RunResult({
   challenge,
 }: {
   response: PythonLabRunResponse;
-  challenge: AiCodeLabChallenge;
+  challenge: CurriculumTask;
 }) {
   const result = response.result;
   const [tab, setTab] = useState<"summary" | "preview" | "logs">("summary");
   const hasPreview = Boolean(
-    result?.losses?.length || result?.layers?.length || result?.policy?.length || result?.notes?.length
+    result?.losses?.length ||
+      result?.modelMeta?.lossHistory?.length ||
+      result?.modelMeta?.episodeRewards?.length ||
+      result?.layers?.length ||
+      result?.modelMeta?.layers?.length ||
+      result?.policy?.length ||
+      result?.notes?.length
   );
   const hasLogs = Boolean(response.stdout || response.stderr);
 
@@ -228,10 +202,10 @@ function RunResult({
         }`}
       >
         <div className="font-semibold text-[#18202f]">
-          {response.ok ? "Hazır" : "Hata"} · {formatNumber(response.durationMs / 1000, 2)} sn
+          {response.ok ? (response.passed ? "Passed" : "Ran") : "Hata"} · {formatNumber(response.durationMs / 1000, 2)} sn
         </div>
         <div className="text-[#526070]">
-          {challenge.applyToNetwork ? "network aktarımı destekli" : "simülasyon sonucu"}
+          {challenge.title}
           {response.error ? ` · ${response.error}` : ""}
         </div>
       </div>
@@ -250,6 +224,18 @@ function RunResult({
       {tab === "summary" && (
         <div className="space-y-3">
           {result && <ResultMetrics result={result} />}
+          {response.feedback.length > 0 && (
+            <div className={`rounded-md border p-3 ${response.passed ? "border-[#bbf7d0] bg-[#f0fdf4]" : "border-[#fed7aa] bg-[#fff7ed]"}`}>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+                Grading
+              </div>
+              <div className="space-y-1 text-[11px] leading-5 text-[#526070]">
+                {response.feedback.map((item) => (
+                  <div key={item}>{item}</div>
+                ))}
+              </div>
+            </div>
+          )}
           {result?.notes && result.notes.length > 0 && (
             <div className="rounded-md border border-[#dbe3ee] bg-[#fbfdff] p-3">
               <div className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
@@ -268,8 +254,13 @@ function RunResult({
       {tab === "preview" && (
         <div className="space-y-3">
           {!hasPreview && <div className="text-[11px] leading-5 text-[#64748b]">Bu sonuç için ek önizleme yok.</div>}
-          {result?.losses && result.losses.length > 0 && <LossSparkline values={result.losses} />}
-          {result?.layers && <LayerPreview layers={result.layers} />}
+          {(result?.losses?.length || result?.modelMeta?.lossHistory?.length) && (
+            <LossSparkline values={result.losses?.length ? result.losses : result.modelMeta?.lossHistory ?? []} />
+          )}
+          {result?.modelMeta?.episodeRewards && result.modelMeta.episodeRewards.length > 0 && (
+            <EpisodeRewardPreview values={result.modelMeta.episodeRewards} />
+          )}
+          {(result?.layers || result?.modelMeta?.layers) && <LayerPreview layers={result.layers ?? result.modelMeta?.layers} />}
           {result?.policy && <PolicyPreview policy={result.policy} trajectory={result.trajectory ?? []} />}
         </div>
       )}
@@ -289,6 +280,12 @@ function ResultMetrics({ result }: { result: PythonLabResult }) {
   const metrics = [
     result.epochs !== undefined ? { label: "epoch", value: result.epochs } : null,
     result.accuracy !== undefined ? { label: "accuracy", value: `${formatNumber(result.accuracy * 100, 1)}%` } : null,
+    result.loss !== undefined ? { label: "loss", value: formatNumber(result.loss, 6) } : null,
+    result.val_loss !== undefined ? { label: "val loss", value: formatNumber(result.val_loss, 6) } : null,
+    result.r2_score !== undefined ? { label: "r2", value: formatNumber(result.r2_score, 4) } : null,
+    result.inertia !== undefined ? { label: "inertia", value: formatNumber(result.inertia, 4) } : null,
+    result.n_clusters !== undefined ? { label: "clusters", value: result.n_clusters } : null,
+    result.avg_reward_last10 !== undefined ? { label: "reward", value: formatNumber(result.avg_reward_last10, 3) } : null,
     result.losses?.length ? { label: "son loss", value: formatNumber(result.losses.at(-1) ?? 0, 6) } : null,
     ...(result.metrics ?? []),
   ].filter(Boolean) as Array<{ label: string; value: string | number }>;
@@ -336,7 +333,33 @@ function LossSparkline({ values }: { values: number[] }) {
   );
 }
 
-function LayerPreview({ layers }: { layers: PythonLabResult["layers"] }) {
+function EpisodeRewardPreview({ values }: { values: number[] }) {
+  const sample = values.slice(-80);
+  return (
+    <div className="rounded-md border border-[#dbe3ee] bg-white p-3">
+      <div className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#64748b]">
+        Episode Rewards
+      </div>
+      <div className="flex h-20 items-end gap-0.5">
+        {sample.map((value, index) => {
+          const min = Math.min(...sample);
+          const max = Math.max(...sample);
+          const spread = Math.max(1e-9, max - min);
+          const height = 12 + ((value - min) / spread) * 64;
+          return (
+            <span
+              key={`${index}-${value}`}
+              className={value >= 0 ? "bg-[#10b981]" : "bg-[#ef4444]"}
+              style={{ height, width: `${100 / Math.max(1, sample.length)}%` }}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function LayerPreview({ layers }: { layers?: Array<{ size: number; activation?: string; kind?: ModelMetaLayer["kind"] }> }) {
   if (!layers?.length) return null;
   return (
     <div className="rounded-md border border-[#dbe3ee] bg-white p-3">
@@ -350,7 +373,7 @@ function LayerPreview({ layers }: { layers: PythonLabResult["layers"] }) {
           return (
             <div key={`${layerIndex}-${layer.size}`} className="shrink-0">
               <div className="mb-1 text-center text-[10px] font-semibold text-[#64748b]">
-                L{layerIndex} · {layer.size}
+                {layer.kind ?? `L${layerIndex}`} · {layer.size}
               </div>
               <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${Math.min(4, visible)}, 10px)` }}>
                 {Array.from({ length: visible }, (_, index) => (

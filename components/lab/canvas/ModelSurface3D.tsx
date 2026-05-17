@@ -15,6 +15,7 @@ import type {
 import { edgeId, formatNumber } from "@/lib/ml/network";
 import type { VisualizationMode } from "@/lib/ml/lab-types";
 import type { Task } from "@/lib/ml/tasks";
+import type { ModelMeta } from "@/lib/ml/types";
 
 interface ModelSurface3DProps {
   task: Task;
@@ -28,9 +29,11 @@ interface ModelSurface3DProps {
   onSelect: (selection: Selection | null) => void;
   onHover: (selection: Selection | null) => void;
   onOpenDetail: (selection: Selection) => void;
+  modelMeta?: ModelMeta;
 }
 
 type SceneMode = "architecture" | "surface";
+type RenderMode = SceneMode | "reward";
 
 interface InteractiveObject extends THREE.Object3D {
   userData: {
@@ -48,6 +51,9 @@ interface SignalDefinition {
   backwardDelay: number;
   duration: number;
   radius: number;
+  weightMagnitude: number;
+  forwardColor: string;
+  backwardColor: string;
 }
 
 interface PulseBurst {
@@ -66,6 +72,12 @@ interface SignalParticle {
   mesh: THREE.Mesh<THREE.SphereGeometry, THREE.MeshStandardMaterial>;
   trail: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
   trailPositions: Float32Array;
+}
+
+interface RewardSceneAnimation {
+  marker: THREE.Mesh<THREE.SphereGeometry, THREE.MeshStandardMaterial>;
+  positions: THREE.Vector3[];
+  values: number[];
 }
 
 const DEFAULT_ARCHITECTURE_CAMERA = new THREE.Vector3(5.8, 3.6, 6.5);
@@ -97,11 +109,13 @@ function outputHeight(value: number) {
 function metricForEdge(edge: EdgeSnapshot | undefined, fallbackWeight: number, mode: VisualizationMode) {
   if (mode === "weights") return fallbackWeight;
   if (mode === "gradients") return edge?.gradient ?? 0;
+  if (mode === "rl-reward") return fallbackWeight;
   return edge?.correction ?? 0;
 }
 
 function colorForMetric(value: number, mode: VisualizationMode) {
   if (mode === "corrections") return value >= 0 ? "#059669" : "#f97316";
+  if (mode === "rl-reward") return value >= 0 ? "#2563eb" : "#e11d48";
   return value >= 0 ? "#2563eb" : "#e11d48";
 }
 
@@ -320,6 +334,100 @@ function buildSurfaceScene(scene: THREE.Scene, task: Task, network: NeuralNetwor
   });
 }
 
+function sampledRewards(values: number[], limit = 96) {
+  const clean = values.filter(Number.isFinite);
+  if (clean.length <= limit) return clean;
+  const step = clean.length / limit;
+  return Array.from({ length: limit }, (_, index) => clean[Math.min(clean.length - 1, Math.floor(index * step))]);
+}
+
+function buildRewardScene(scene: THREE.Scene, rewards: number[]): RewardSceneAnimation | null {
+  const values = sampledRewards(rewards);
+  if (values.length === 0) return null;
+
+  const grid = new THREE.GridHelper(7, 14, "#cbd5e1", "#e2e8f0");
+  grid.position.y = -1.18;
+  scene.add(grid);
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const magnitude = Math.max(1e-6, Math.max(Math.abs(min), Math.abs(max)));
+  const spread = Math.max(1e-6, max - min);
+  const width = 6.2;
+  const gap = width / values.length;
+  const positions: THREE.Vector3[] = [];
+  const red = new THREE.Color("#ef4444");
+  const yellow = new THREE.Color("#f59e0b");
+  const green = new THREE.Color("#10b981");
+
+  values.forEach((reward, index) => {
+    const normalized = (reward - min) / spread;
+    const color = reward < 0
+      ? new THREE.Color().lerpColors(red, yellow, Math.max(0, Math.min(1, normalized)))
+      : new THREE.Color().lerpColors(yellow, green, Math.max(0, Math.min(1, reward / magnitude)));
+    const height = 0.08 + Math.abs(reward) / magnitude * 2.6;
+    const geometry = new THREE.BoxGeometry(Math.max(0.025, gap * 0.62), height, 0.24);
+    const material = new THREE.MeshStandardMaterial({
+      color,
+      roughness: 0.36,
+      metalness: 0.04,
+      emissive: color,
+      emissiveIntensity: 0.04,
+    });
+    const bar = new THREE.Mesh(geometry, material);
+    const x = -width / 2 + index * gap + gap / 2;
+    bar.position.set(x, -1.12 + height / 2, 0);
+    scene.add(bar);
+    positions.push(new THREE.Vector3(x, -1.02 + height + 0.18, 0));
+  });
+
+  const zeroLine = addCylinderBetween(
+    new THREE.Vector3(-width / 2, -1.1, -0.22),
+    new THREE.Vector3(width / 2, -1.1, -0.22),
+    0.012,
+    new THREE.MeshBasicMaterial({ color: "#475569", transparent: true, opacity: 0.55 })
+  );
+  scene.add(zeroLine);
+
+  const title = addLabelSprite(`Episode reward\n${values.length} samples`, "#334155", 360, 108);
+  if (title) {
+    title.position.set(0, 2.05, 0);
+    title.scale.set(1.9, 0.62, 1);
+    scene.add(title);
+  }
+
+  const minLabel = addLabelSprite(`min ${formatNumber(min, 2)}`, "#b91c1c", 220, 74);
+  if (minLabel) {
+    minLabel.position.set(-3.25, -1.0, 0.65);
+    scene.add(minLabel);
+  }
+  const maxLabel = addLabelSprite(`max ${formatNumber(max, 2)}`, "#047857", 220, 74);
+  if (maxLabel) {
+    maxLabel.position.set(3.25, -1.0, 0.65);
+    scene.add(maxLabel);
+  }
+
+  const marker = new THREE.Mesh(
+    new THREE.SphereGeometry(0.115, 24, 24),
+    new THREE.MeshStandardMaterial({
+      color: "#111827",
+      emissive: "#38bdf8",
+      emissiveIntensity: 0.8,
+      roughness: 0.18,
+    })
+  );
+  marker.position.copy(positions[0]);
+  scene.add(marker);
+
+  const halo = new THREE.Mesh(
+    new THREE.TorusGeometry(0.2, 0.014, 10, 48),
+    new THREE.MeshBasicMaterial({ color: "#111827", transparent: true, opacity: 0.7 })
+  );
+  marker.add(halo);
+
+  return { marker, positions, values };
+}
+
 function buildArchitectureScene({
   scene,
   task,
@@ -497,6 +605,9 @@ function buildArchitectureScene({
               (network.weights.length - 1 - layerIndex) * 0.5 + (signalCount % 16) * 0.028,
             duration: 1.75 + layerCount * 0.1,
             radius: 0.038 + Math.min(0.045, pulseStrength * 0.13),
+            weightMagnitude: Math.abs(weight),
+            forwardColor: colorForMetric(weight, "weights"),
+            backwardColor: colorForMetric(metric, visualizationMode),
           });
           signalCount += 1;
         }
@@ -530,6 +641,7 @@ export function ModelSurface3D({
   onSelect,
   onHover,
   onOpenDetail,
+  modelMeta,
 }: ModelSurface3DProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -540,7 +652,12 @@ export function ModelSurface3D({
   const [mode, setMode] = useState<SceneMode>("architecture");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const canShowSurface = task.inputSize <= 2;
-  const activeMode = canShowSurface ? mode : "architecture";
+  const episodeRewards = useMemo(
+    () => (modelMeta?.episodeRewards ?? []).filter(Number.isFinite),
+    [modelMeta]
+  );
+  const showRewardScene = visualizationMode === "rl-reward" && episodeRewards.length > 0;
+  const activeMode: RenderMode = showRewardScene ? "reward" : canShowSurface ? mode : "architecture";
   const activeSelection = hovered ?? selected;
   const selectedNeuron = activeSelection?.type === "neuron"
     ? trace.neurons.find((neuron) => neuron.id === activeSelection.id)
@@ -548,13 +665,14 @@ export function ModelSurface3D({
   const selectedEdge = activeSelection?.type === "edge"
     ? trace.edges.find((edge) => edge.id === activeSelection.id)
     : null;
-  const sceneLabel = activeMode === "architecture" ? "Ağ mimarisi" : "Karar yüzeyi";
+  const sceneLabel =
+    activeMode === "reward" ? "RL ödül grafiği" : activeMode === "architecture" ? "Ağ mimarisi" : "Karar yüzeyi";
 
   const resetCamera = () => {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     if (!camera || !controls) return;
-    camera.position.copy(activeMode === "architecture" ? DEFAULT_ARCHITECTURE_CAMERA : DEFAULT_SURFACE_CAMERA);
+    camera.position.copy(activeMode === "surface" ? DEFAULT_SURFACE_CAMERA : DEFAULT_ARCHITECTURE_CAMERA);
     controls.target.copy(SCENE_TARGET);
     controls.update();
     cameraPoseRef.current = {
@@ -612,7 +730,7 @@ export function ModelSurface3D({
     host.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
-    const defaultPosition = activeMode === "architecture" ? DEFAULT_ARCHITECTURE_CAMERA : DEFAULT_SURFACE_CAMERA;
+    const defaultPosition = activeMode === "surface" ? DEFAULT_SURFACE_CAMERA : DEFAULT_ARCHITECTURE_CAMERA;
     const savedPose = cameraPoseRef.current;
     camera.position.copy(savedPose?.position ?? defaultPosition);
     controls.target.copy(savedPose?.target ?? SCENE_TARGET);
@@ -642,7 +760,11 @@ export function ModelSurface3D({
     light.position.set(3, 5, 4);
     scene.add(light);
 
-    if (activeMode === "surface" && canShowSurface) {
+    const rewardAnimation = activeMode === "reward" ? buildRewardScene(scene, episodeRewards) : null;
+
+    if (activeMode === "reward") {
+      // Reward scene is built above.
+    } else if (activeMode === "surface" && canShowSurface) {
       buildSurfaceScene(scene, task, network, data);
     } else {
       buildArchitectureScene({
@@ -687,7 +809,7 @@ export function ModelSurface3D({
       definition: SignalDefinition,
       burst: PulseBurst
     ): SignalParticle => {
-      const color = burst.phase === "forward" ? "#0891b2" : "#f97316";
+      const color = burst.phase === "forward" ? definition.forwardColor : definition.backwardColor;
       const from = burst.phase === "forward" ? definition.forwardFrom : definition.backwardFrom;
       const to = burst.phase === "forward" ? definition.forwardTo : definition.backwardTo;
       const delay = burst.phase === "forward" ? definition.forwardDelay : definition.backwardDelay;
@@ -725,7 +847,10 @@ export function ModelSurface3D({
         phase: burst.phase,
         from,
         to,
-        duration: definition.duration,
+        duration:
+          burst.phase === "forward"
+            ? definition.duration / (0.68 + Math.min(2.2, definition.weightMagnitude) * 0.52)
+            : definition.duration,
         startTime: burst.startedAt + delay,
         mesh,
         trail,
@@ -785,6 +910,17 @@ export function ModelSurface3D({
         const position = particle.trail.geometry.getAttribute("position");
         position.needsUpdate = true;
       });
+
+      if (rewardAnimation && rewardAnimation.positions.length > 0) {
+        const speed = 0.95;
+        const cursor = (now * speed) % rewardAnimation.positions.length;
+        const index = Math.floor(cursor);
+        const nextIndex = (index + 1) % rewardAnimation.positions.length;
+        const t = cursor - index;
+        const position = rewardAnimation.positions[index].clone().lerp(rewardAnimation.positions[nextIndex], t);
+        rewardAnimation.marker.position.copy(position);
+        rewardAnimation.marker.scale.setScalar(0.88 + Math.sin(now * 6) * 0.08);
+      }
       renderer.render(scene, camera);
       frame = window.requestAnimationFrame(animate);
     };
@@ -850,6 +986,7 @@ export function ModelSurface3D({
     activeMode,
     canShowSurface,
     data,
+    episodeRewards,
     network,
     onHover,
     onOpenDetail,
@@ -870,7 +1007,7 @@ export function ModelSurface3D({
       <div className="pointer-events-none absolute left-4 top-4 max-w-[320px] rounded-md border border-white/70 bg-white/90 px-3 py-2 shadow-sm backdrop-blur">
         <div className="text-xs font-semibold text-[#18202f]">3D Simülasyon</div>
         <div className="mt-0.5 truncate text-[11px] leading-4 text-[#526070]">
-          {sceneLabel} · {network.getLayerSizes().join(" -> ")}
+          {sceneLabel} · {activeMode === "reward" ? `${episodeRewards.length} episode` : network.getLayerSizes().join(" -> ")}
         </div>
       </div>
       <div className="absolute right-4 top-4 flex flex-col items-end gap-1.5">
@@ -936,7 +1073,11 @@ export function ModelSurface3D({
       </div>
       <div className="pointer-events-none absolute bottom-4 left-4 max-w-[300px] rounded-md border border-white/70 bg-white/[0.9] px-3 py-2 text-[11px] leading-4 text-[#526070] shadow-sm backdrop-blur">
         <div className="font-semibold text-[#18202f]">Sahne</div>
-        <div>Faz: {phase} · loss {formatNumber(network.evaluateLoss(data), 5)}</div>
+        <div>
+          {activeMode === "reward"
+            ? `Faz: ${phase} · son ödül ${formatNumber(episodeRewards.at(-1) ?? 0, 3)}`
+            : `Faz: ${phase} · loss ${formatNumber(network.evaluateLoss(data), 5)}`}
+        </div>
       </div>
       <div className="pointer-events-auto absolute bottom-4 right-4 w-[min(320px,calc(100%-2rem))] rounded-md border border-[#dbe5f1] bg-white/[0.94] p-3 text-xs leading-5 text-[#526070] shadow-sm backdrop-blur">
         <div className="flex items-start justify-between gap-3">

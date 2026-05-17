@@ -2,7 +2,7 @@ import type { Selection } from "./network";
 
 export type ConceptMode = "beginner" | "math" | "engineer";
 
-export type VisualizationMode = "weights" | "gradients" | "corrections";
+export type VisualizationMode = "weights" | "gradients" | "corrections" | "rl-reward";
 
 export interface PlaybackState {
   epochIndex: number;

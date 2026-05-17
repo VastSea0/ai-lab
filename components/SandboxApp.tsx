@@ -1180,10 +1180,12 @@ function NetworkCanvas({
                   ? weight
                   : visualizationMode === "gradients"
                     ? traceEdge?.gradient ?? 0
-                    : traceEdge?.correction ?? 0;
+                    : visualizationMode === "corrections"
+                      ? traceEdge?.correction ?? 0
+                      : weight;
               const metricMagnitude = Math.min(
                 1,
-                Math.abs(metric) / (visualizationMode === "weights" ? 2.4 : 0.35)
+                Math.abs(metric) / (visualizationMode === "weights" || visualizationMode === "rl-reward" ? 2.4 : 0.35)
               );
               const stroke =
                 visualizationMode === "corrections"

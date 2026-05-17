@@ -1,54 +1,14 @@
-import type { ActivationName, DataPoint, LayerConfig } from "./network";
-import type { TaskId } from "./tasks";
+import type { ActivationName } from "./network";
+import type { AiCodeLabChallenge } from "./types";
 
-export type CodeLabTrack = "core-ml" | "deep-learning" | "reinforcement";
-export type CodeLabDifficulty = "kolay" | "orta" | "zor";
-
-export interface AiCodeLabChallenge {
-  id: string;
-  title: string;
-  track: CodeLabTrack;
-  difficulty: CodeLabDifficulty;
-  taskId?: TaskId;
-  libraries: string[];
-  concepts: string[];
-  summary: string;
-  prompt: string;
-  starterCode: string;
-  applyToNetwork: boolean;
-}
-
-export interface PythonLabMetric {
-  label: string;
-  value: string | number;
-}
-
-export interface PythonLabResult {
-  title?: string;
-  classNames?: string[];
-  layers?: LayerConfig[];
-  weights?: number[][][];
-  biases?: number[][];
-  dataset?: DataPoint[];
-  losses?: number[];
-  accuracy?: number;
-  epochs?: number;
-  notes?: string[];
-  metrics?: PythonLabMetric[];
-  qTable?: number[][];
-  policy?: string[];
-  trajectory?: number[][];
-}
-
-export interface PythonLabRunResponse {
-  ok: boolean;
-  challengeId?: string;
-  stdout: string;
-  stderr: string;
-  durationMs: number;
-  result?: PythonLabResult;
-  error?: string;
-}
+export type {
+  AiCodeLabChallenge,
+  CodeLabDifficulty,
+  CodeLabTrack,
+  PythonLabMetric,
+  PythonLabResult,
+  PythonLabRunResponse,
+} from "./types";
 
 const COMMON_EMIT_HELPER = String.raw`
 def emit_ai_lab_result(result):

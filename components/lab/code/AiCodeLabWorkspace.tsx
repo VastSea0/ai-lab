@@ -6,16 +6,22 @@ import { useCallback, useMemo, useState } from "react";
 import { ModelSurface3D } from "@/components/lab/canvas/ModelSurface3D";
 import { AiCodeLab } from "@/components/lab/code/AiCodeLab";
 import { IconToolbar, MetricStrip, StatusToast, WorkbenchShell } from "@/components/lab/ui/Workbench";
-import type { AiCodeLabChallenge, PythonLabResult } from "@/lib/ml/code-lab";
-import type { DataPoint, LayerConfig, Selection, TrainingPhase, TrainingTrace } from "@/lib/ml/network";
+import {
+  CURRICULUM_PROGRESS_KEY,
+  curriculumPhaseSummary,
+  normalizeCurriculumProgress,
+} from "@/lib/ml/curriculum";
+import type { CurriculumProgress, CurriculumTask, ModelMeta, PythonLabResult } from "@/lib/ml/types";
+import type { DataPoint, Selection, TrainingPhase, TrainingTrace } from "@/lib/ml/network";
 import { formatNumber, NeuralNetwork } from "@/lib/ml/network";
-import type { Task } from "@/lib/ml/tasks";
+import type { Task, TaskId } from "@/lib/ml/tasks";
 import { getTask } from "@/lib/ml/tasks";
 import type { VisualizationMode } from "@/lib/ml/lab-types";
 
 interface ImportedModel {
-  challenge: AiCodeLabChallenge;
+  challenge: CurriculumTask;
   result: PythonLabResult;
+  modelMeta?: ModelMeta;
   task: Task;
   data: DataPoint[];
   network: NeuralNetwork;
@@ -38,56 +44,96 @@ function firstTrace(network: NeuralNetwork, data: DataPoint[]) {
   return network.inspect(first.inputs, first.targets);
 }
 
-function buildImportedModel(
-  challenge: AiCodeLabChallenge,
-  result: PythonLabResult,
-  seed: number
-): ImportedModel {
-  if (!challenge.taskId) {
-    throw new Error("Bu challenge sinir ağı üretmiyor; sonucu policy/simülasyon olarak oku.");
+function readCurriculumProgress(): CurriculumProgress {
+  if (typeof window === "undefined") return normalizeCurriculumProgress(null);
+  try {
+    return normalizeCurriculumProgress(JSON.parse(window.localStorage.getItem(CURRICULUM_PROGRESS_KEY) ?? "null"));
+  } catch {
+    return normalizeCurriculumProgress(null);
   }
-  if (!result.layers?.length || !result.weights?.length || !result.biases?.length) {
-    throw new Error("Modeli görselleştirmek için layers, weights ve biases alanları gerekli.");
-  }
+}
 
-  const baseTask = getTask(challenge.taskId);
-  const layers: LayerConfig[] = result.layers.map((layer) => ({
-    size: Math.max(1, Math.floor(finiteNumber(layer.size, 1))),
-    activation: layer.activation,
-  }));
-  const inputSize = layers[0]?.size ?? baseTask.inputSize;
-  const outputSize = layers.at(-1)?.size ?? baseTask.outputSize;
-  const classNames =
-    baseTask.outputType === "classification"
-      ? Array.from(
-          { length: outputSize },
-          (_, index) => result.classNames?.[index] ?? baseTask.classNames?.[index] ?? `Sınıf ${index}`
-        )
-      : baseTask.classNames;
-  const sourceData = result.dataset?.length ? result.dataset : baseTask.data;
-  const data = sourceData.map((point, index) => ({
+function modelTaskId(meta: ModelMeta | undefined, inputSize: number, outputSize: number): TaskId {
+  if (meta?.type === "cnn" || inputSize === 25) return "digit";
+  if (meta?.type === "sklearn" && outputSize === 1) return "regression";
+  if (meta?.type === "lstm") return "sine";
+  return "xor";
+}
+
+function dataForImportedResult(result: PythonLabResult, inputSize: number, outputSize: number): DataPoint[] {
+  const sourceData = result.dataset?.length
+    ? result.dataset
+    : [
+        {
+          id: "meta-0",
+          inputs: Array(inputSize).fill(0),
+          targets: Array(outputSize).fill(0),
+          label: "preview",
+        },
+      ];
+
+  return sourceData.map((point, index) => ({
     id: String(point.id ?? `code-${index + 1}`),
     inputs: Array.from({ length: inputSize }, (_, inputIndex) => finiteNumber(point.inputs?.[inputIndex], 0)),
     targets: Array.from({ length: outputSize }, (_, targetIndex) => finiteNumber(point.targets?.[targetIndex], 0)),
     label: point.label,
   }));
+}
+
+function buildImportedModel(
+  challenge: CurriculumTask,
+  result: PythonLabResult,
+  seed: number
+): ImportedModel {
+  const network = result.modelMeta
+    ? NeuralNetwork.fromMeta(result.modelMeta, seed)
+    : result.layers?.length && result.weights?.length && result.biases?.length
+      ? NeuralNetwork.fromParameters(
+          result.layers.map((layer) => ({
+            size: Math.max(1, Math.floor(finiteNumber(layer.size, 1))),
+            activation: layer.activation,
+          })),
+          result.weights,
+          result.biases,
+          seed
+        )
+      : null;
+
+  if (!network) {
+    throw new Error("Modeli görselleştirmek için modelMeta veya layers/weights/biases alanları gerekli.");
+  }
+
+  const layerConfigs = network.getLayerConfigs();
+  const inputSize = layerConfigs[0]?.size ?? 1;
+  const outputSize = layerConfigs.at(-1)?.size ?? 1;
+  const baseTask = getTask(modelTaskId(result.modelMeta, inputSize, outputSize));
+  const outputType = outputSize > 1 ? "classification" : "regression";
+  const data = dataForImportedResult(result, inputSize, outputSize);
+  const classNames =
+    outputType === "classification"
+      ? Array.from(
+          { length: outputSize },
+          (_, index) => result.classNames?.[index] ?? baseTask.classNames?.[index] ?? `Sınıf ${index}`
+        )
+      : undefined;
   const task: Task = {
     ...baseTask,
     name: result.title ?? challenge.title,
-    description: challenge.summary,
-    explanation: challenge.prompt,
+    description: challenge.description,
+    explanation: challenge.description,
     inputSize,
     outputSize,
+    outputType,
     classNames,
-    defaultLayers: layers,
+    defaultLayers: layerConfigs,
     data,
   };
-  const network = NeuralNetwork.fromParameters(layers, result.weights, result.biases, seed);
-  const lossHistory = (result.losses ?? []).filter(Number.isFinite).slice(-160);
+  const lossHistory = (result.losses ?? result.modelMeta?.lossHistory ?? []).filter(Number.isFinite).slice(-160);
 
   return {
     challenge,
     result,
+    modelMeta: result.modelMeta,
     task,
     data,
     network,
@@ -113,12 +159,19 @@ function selectionSummary(selection: Selection | null, trace: TrainingTrace | nu
 export function AiCodeLabWorkspace() {
   const [imported, setImported] = useState<ImportedModel | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [curriculumProgress, setCurriculumProgress] = useState<CurriculumProgress>(() => readCurriculumProgress());
   const [selected, setSelected] = useState<Selection | null>(null);
   const [hovered, setHovered] = useState<Selection | null>(null);
   const [phase, setPhase] = useState<TrainingPhase>("idle");
   const [visualizationMode, setVisualizationMode] = useState<VisualizationMode>("weights");
 
-  const applyResult = useCallback((challenge: AiCodeLabChallenge, result: PythonLabResult) => {
+  const updateCurriculumProgress = useCallback((nextProgress: CurriculumProgress) => {
+    const clean = normalizeCurriculumProgress(nextProgress);
+    setCurriculumProgress(clean);
+    window.localStorage.setItem(CURRICULUM_PROGRESS_KEY, JSON.stringify(clean));
+  }, []);
+
+  const applyResult = useCallback((challenge: CurriculumTask, result: PythonLabResult) => {
     try {
       const next = buildImportedModel(challenge, result, Date.now() % 100_000);
       setImported(next);
@@ -133,6 +186,9 @@ export function AiCodeLabWorkspace() {
   }, []);
 
   const activeSelection = hovered ?? selected;
+  const hasEpisodeRewards = Boolean(imported?.modelMeta?.episodeRewards?.length);
+  const activeVisualizationMode =
+    visualizationMode === "rl-reward" && !hasEpisodeRewards ? "weights" : visualizationMode;
   const activeLoss = imported?.network.evaluateLoss(imported.data) ?? null;
   const layerText = useMemo(
     () => imported?.network.getLayerSizes().join(" → ") ?? "model bekleniyor",
@@ -163,6 +219,7 @@ export function AiCodeLabWorkspace() {
           </div>
 
           <div className="flex min-w-0 items-center gap-2">
+            <CurriculumProgressHeader progress={curriculumProgress} />
             <MetricStrip
               items={[
                 { label: "Katman", value: layerText },
@@ -172,13 +229,16 @@ export function AiCodeLabWorkspace() {
             <IconToolbar label="Kod labı ayarları" className="shrink-0">
               <select
                 className="h-7 rounded border-0 bg-transparent px-1.5 text-[11px] font-semibold text-[#334155] outline-none"
-                value={visualizationMode}
+                value={activeVisualizationMode}
                 onChange={(event) => setVisualizationMode(event.target.value as VisualizationMode)}
                 aria-label="Görselleştirme modu"
               >
                 <option value="weights">Ağırlık</option>
                 <option value="gradients">Gradient</option>
                 <option value="corrections">Düzeltme</option>
+                <option value="rl-reward" disabled={!hasEpisodeRewards}>
+                  RL Ödül
+                </option>
               </select>
             </IconToolbar>
             <button
@@ -198,7 +258,12 @@ export function AiCodeLabWorkspace() {
 
         <div className="grid min-h-0 grid-cols-[clamp(320px,33vw,390px)_minmax(0,1fr)] gap-px bg-[#d7dde8]">
           <aside className="min-h-0 overflow-y-auto bg-white px-3 py-3">
-            <AiCodeLab onApplyResult={applyResult} applyLabel="Görselleştir" />
+            <AiCodeLab
+              onApplyResult={applyResult}
+              applyLabel="Görselleştir"
+              progress={curriculumProgress}
+              onProgressChange={updateCurriculumProgress}
+            />
           </aside>
 
           <section className="relative min-h-0 overflow-hidden bg-[#eef3f8]">
@@ -209,12 +274,13 @@ export function AiCodeLabWorkspace() {
                 data={imported.data}
                 trace={imported.trace}
                 phase={phase}
-                visualizationMode={visualizationMode}
+                visualizationMode={activeVisualizationMode}
                 selected={selected}
                 hovered={hovered}
                 onSelect={setSelected}
                 onHover={setHovered}
                 onOpenDetail={setSelected}
+                modelMeta={imported.modelMeta}
               />
             ) : (
               <div className="flex h-full items-start justify-start p-5">
@@ -263,5 +329,29 @@ export function AiCodeLabWorkspace() {
         </div>
       </div>
     </WorkbenchShell>
+  );
+}
+
+function CurriculumProgressHeader({ progress }: { progress: CurriculumProgress }) {
+  const summary = curriculumPhaseSummary(progress);
+  return (
+    <div className="hidden min-w-[210px] grid-cols-3 gap-2 rounded-md border border-[#dbe3ee] bg-white px-2.5 py-1.5 lg:grid">
+      {summary.map(({ phase, completed, total }) => (
+        <div key={phase} className="min-w-0">
+          <div className="flex items-center justify-between gap-1 text-[9px] font-bold uppercase tracking-[0.08em] text-[#64748b]">
+            <span>P{phase}</span>
+            <span>
+              {completed}/{total}
+            </span>
+          </div>
+          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#e2e8f0]">
+            <div
+              className="h-full rounded-full bg-[#2563eb]"
+              style={{ width: `${Math.round((completed / Math.max(1, total)) * 100)}%` }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }

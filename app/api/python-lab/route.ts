@@ -4,13 +4,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { getAiCodeLabChallenge, type PythonLabResult, type PythonLabRunResponse } from "@/lib/ml/code-lab";
+import { getCurriculumTask } from "@/lib/ml/curriculum";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_CODE_LENGTH = 70_000;
 const MAX_OUTPUT_LENGTH = 180_000;
-const TIMEOUT_MS = 22_000;
+const TIMEOUT_MS = 60_000;
 const RESULT_PATTERN = /AI_LAB_RESULT_START\s*([\s\S]*?)\s*AI_LAB_RESULT_END/;
 
 interface RunRequest {
@@ -66,6 +67,8 @@ function runPython(filePath: string, cwd: string) {
         stdout,
         stderr,
         durationMs: Date.now() - started,
+        passed: false,
+        feedback: ["Python process could not be started."],
         error: error.message,
       });
     });
@@ -84,6 +87,9 @@ function runPython(filePath: string, cwd: string) {
         stderr,
         durationMs: Date.now() - started,
         result,
+        modelMeta: result?.modelMeta,
+        passed: false,
+        feedback: [],
         error: timedOut
           ? `${TIMEOUT_MS / 1000} saniye timeout.`
           : parseError ?? (code === 0 ? undefined : `Python çıkış kodu ${code}.`),
@@ -101,7 +107,15 @@ export async function POST(request: Request) {
     body = (await request.json()) as RunRequest;
   } catch {
     return NextResponse.json(
-      { ok: false, stdout: "", stderr: "", durationMs: 0, error: "Geçersiz JSON isteği." },
+      {
+        ok: false,
+        stdout: "",
+        stderr: "",
+        durationMs: 0,
+        passed: false,
+        feedback: ["Request JSON could not be parsed."],
+        error: "Geçersiz JSON isteği.",
+      },
       { status: 400 }
     );
   }
@@ -109,25 +123,75 @@ export async function POST(request: Request) {
   const code = body.code ?? "";
   if (typeof code !== "string" || code.trim().length === 0) {
     return NextResponse.json(
-      { ok: false, stdout: "", stderr: "", durationMs: 0, error: "Çalıştırılacak Python kodu boş." },
+      {
+        ok: false,
+        stdout: "",
+        stderr: "",
+        durationMs: 0,
+        passed: false,
+        feedback: ["Python code is empty."],
+        error: "Çalıştırılacak Python kodu boş.",
+      },
       { status: 400 }
     );
   }
   if (code.length > MAX_CODE_LENGTH) {
     return NextResponse.json(
-      { ok: false, stdout: "", stderr: "", durationMs: 0, error: "Kod bu lab hücresi için çok uzun." },
+      {
+        ok: false,
+        stdout: "",
+        stderr: "",
+        durationMs: 0,
+        passed: false,
+        feedback: ["Python code is longer than this lab cell allows."],
+        error: "Kod bu lab hücresi için çok uzun.",
+      },
       { status: 413 }
     );
   }
 
   const challenge = body.challengeId ? getAiCodeLabChallenge(body.challengeId) : undefined;
+  const curriculumTask = body.challengeId ? getCurriculumTask(body.challengeId) : undefined;
   const tempDir = await mkdtemp(path.join(tmpdir(), "ai-code-lab-"));
   const filePath = path.join(tempDir, "submission.py");
 
   try {
     await writeFile(filePath, code, "utf8");
     const response = await runPython(filePath, tempDir);
-    return NextResponse.json({ ...response, challengeId: challenge?.id ?? body.challengeId });
+    const challengeId = curriculumTask?.id ?? challenge?.id ?? body.challengeId;
+    if (!curriculumTask) {
+      return NextResponse.json({
+        ...response,
+        challengeId,
+        modelMeta: response.result?.modelMeta,
+      });
+    }
+
+    if (!response.ok || !response.result) {
+      return NextResponse.json({
+        ...response,
+        challengeId,
+        modelMeta: response.result?.modelMeta,
+        passed: false,
+        feedback: response.error
+          ? [`Run did not complete cleanly: ${response.error}`]
+          : ["No JSON result was emitted between the AI_LAB_RESULT markers."],
+      });
+    }
+
+    const verification = curriculumTask.verify({
+      ...response,
+      challengeId,
+      modelMeta: response.result.modelMeta,
+    });
+
+    return NextResponse.json({
+      ...response,
+      challengeId,
+      modelMeta: response.result.modelMeta,
+      passed: verification.passed,
+      feedback: verification.feedback,
+    });
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

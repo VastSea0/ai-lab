@@ -1,3 +1,5 @@
+import type { ModelMeta, ModelMetaLayer } from "./types";
+
 export type ActivationName = "input" | "linear" | "sigmoid" | "tanh" | "relu";
 export type LayerKind = "input" | "hidden" | "output";
 export type TrainingPhase = "idle" | "forward" | "backward";
@@ -128,6 +130,16 @@ function layerKind(index: number, count: number): LayerKind {
   if (index === 0) return "input";
   if (index === count - 1) return "output";
   return "hidden";
+}
+
+function activationFromMeta(layer: ModelMetaLayer, index: number, count: number): ActivationName {
+  if (layer.kind === "input" || index === 0) return "input";
+  const raw = layer.activation?.toLocaleLowerCase("en-US");
+  if (raw === "linear" || raw === "sigmoid" || raw === "tanh" || raw === "relu") return raw;
+  if (layer.kind === "output" || index === count - 1) return "linear";
+  if (layer.kind === "lstm") return "tanh";
+  if (layer.kind === "pool") return "linear";
+  return "relu";
 }
 
 // ─── Seeded random ──────────────────────────────────────────────────────────
@@ -343,6 +355,45 @@ export class NeuralNetwork {
         neuron.bias = layer.kind === "input" ? 0 : Number.isFinite(value) ? value : 0;
       });
     });
+
+    return network;
+  }
+
+  static fromMeta(meta: ModelMeta, seed = 1327): NeuralNetwork {
+    if (!meta.layers.length) {
+      throw new Error("modelMeta.layers boş; görselleştirilecek mimari yok.");
+    }
+
+    const layerConfigs = meta.layers.map((layer, index) => ({
+      size: Math.max(1, Math.floor(Number.isFinite(layer.size) ? layer.size : 1)),
+      activation: activationFromMeta(layer, index, meta.layers.length),
+    }));
+    const network = NeuralNetwork.create(layerConfigs, seed);
+    const importedWeights = meta.weights;
+
+    if (!importedWeights || importedWeights.length !== network.weights.length) {
+      return network;
+    }
+
+    const shapesMatch = importedWeights.every((matrix, layerIndex) => {
+      const target = network.weights[layerIndex];
+      return (
+        Array.isArray(matrix) &&
+        matrix.length === target.length &&
+        matrix.every((row, rowIndex) => Array.isArray(row) && row.length === target[rowIndex].length)
+      );
+    });
+
+    if (!shapesMatch) return network;
+
+    network.weights = network.weights.map((matrix, layerIndex) =>
+      matrix.map((row, fromIndex) =>
+        row.map((_, toIndex) => {
+          const value = Number(importedWeights[layerIndex][fromIndex][toIndex]);
+          return Number.isFinite(value) ? value : 0;
+        })
+      )
+    );
 
     return network;
   }
