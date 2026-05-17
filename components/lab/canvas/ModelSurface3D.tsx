@@ -35,14 +35,19 @@ type SceneMode = "architecture" | "surface";
 interface InteractiveObject extends THREE.Object3D {
   userData: {
     selection?: Selection;
-    pulse?: {
-      from: THREE.Vector3;
-      to: THREE.Vector3;
-      forwardDelay: number;
-      backwardDelay: number;
-      duration: number;
-    };
   };
+}
+
+interface SignalDefinition {
+  id: string;
+  forwardFrom: THREE.Vector3;
+  forwardTo: THREE.Vector3;
+  backwardFrom: THREE.Vector3;
+  backwardTo: THREE.Vector3;
+  forwardDelay: number;
+  backwardDelay: number;
+  duration: number;
+  radius: number;
 }
 
 interface PulseBurst {
@@ -51,10 +56,23 @@ interface PulseBurst {
   startedAt: number;
 }
 
+interface SignalParticle {
+  key: string;
+  phase: Exclude<TrainingPhase, "idle">;
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  duration: number;
+  startTime: number;
+  mesh: THREE.Mesh<THREE.SphereGeometry, THREE.MeshStandardMaterial>;
+  trail: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+  trailPositions: Float32Array;
+}
+
 const DEFAULT_ARCHITECTURE_CAMERA = new THREE.Vector3(5.8, 3.6, 6.5);
 const DEFAULT_SURFACE_CAMERA = new THREE.Vector3(5.2, 4.4, 6.1);
 const SCENE_TARGET = new THREE.Vector3(0, 0, 0);
 const PULSE_MAX_AGE_SECONDS = 7.5;
+const SIGNAL_PARTICLE_LIMIT = 520;
 
 function classColor(task: Task, index: number) {
   return task.classColors?.[index] ?? ["#2563eb", "#ef4444", "#10b981", "#f59e0b"][index % 4];
@@ -91,10 +109,47 @@ function easeInOut(value: number) {
   return value < 0.5 ? 2 * value * value : 1 - Math.pow(-2 * value + 2, 2) / 2;
 }
 
+function smoothStep(value: number) {
+  const clamped = Math.max(0, Math.min(1, value));
+  return clamped * clamped * (3 - 2 * clamped);
+}
+
 function layerTitle(kind: string, index: number) {
   if (kind === "input") return "INPUT";
   if (kind === "output") return "OUTPUT";
   return `HIDDEN ${index}`;
+}
+
+function signalLane(
+  from: THREE.Vector3,
+  to: THREE.Vector3,
+  side: 1 | -1
+) {
+  const direction = new THREE.Vector3().subVectors(to, from);
+  const length = direction.length();
+  if (length < 1e-6) {
+    return { from: from.clone(), to: to.clone() };
+  }
+  direction.normalize();
+  const lane = new THREE.Vector3().crossVectors(direction, new THREE.Vector3(0, 1, 0));
+  if (lane.lengthSq() < 1e-5) lane.set(0, 0, 1);
+  lane.normalize().multiplyScalar(0.115 * side);
+  lane.y += 0.032 * side;
+  const endpointPadding = Math.min(0.18, length * 0.18);
+
+  return {
+    from: from.clone().addScaledVector(direction, endpointPadding).add(lane),
+    to: to.clone().addScaledVector(direction, -endpointPadding).add(lane),
+  };
+}
+
+function disposeParticle(particle: SignalParticle, scene: THREE.Scene) {
+  scene.remove(particle.mesh);
+  scene.remove(particle.trail);
+  particle.mesh.geometry.dispose();
+  particle.mesh.material.dispose();
+  particle.trail.geometry.dispose();
+  particle.trail.material.dispose();
 }
 
 function clearScene(scene: THREE.Scene) {
@@ -273,7 +328,7 @@ function buildArchitectureScene({
   visualizationMode,
   selected,
   pickables,
-  pulseObjects,
+  signalDefinitions,
 }: {
   scene: THREE.Scene;
   task: Task;
@@ -282,7 +337,7 @@ function buildArchitectureScene({
   visualizationMode: VisualizationMode;
   selected: Selection | null;
   pickables: THREE.Object3D[];
-  pulseObjects: THREE.Object3D[];
+  signalDefinitions: SignalDefinition[];
 }) {
   const layerCount = network.layers.length;
   const layerGap = layerCount <= 1 ? 0 : 5.25 / (layerCount - 1);
@@ -294,7 +349,7 @@ function buildArchitectureScene({
   const showDenseLabels = totalNeurons <= 14;
   const activeId = selected?.id ?? null;
   let visibleWeightCount = 0;
-  let pulseCount = 0;
+  let signalCount = 0;
 
   network.layers.forEach((layer, layerIndex) => {
     const x = -2.625 + layerIndex * layerGap;
@@ -420,38 +475,30 @@ function buildArchitectureScene({
 
         const pulsePriority =
           isConnectedToActive ||
-          layerVisibleCount < 42 ||
-          Math.abs(snapshot?.gradient ?? 0) > 0.025 ||
-          Math.abs(snapshot?.contribution ?? 0) > 0.08;
-        if (pulsePriority && pulseCount < 130) {
+          layerVisibleCount < 30 ||
+          Math.abs(snapshot?.gradient ?? 0) > 0.035 ||
+          Math.abs(snapshot?.contribution ?? 0) > 0.1;
+        if (pulsePriority && signalCount < 112) {
           const pulseStrength = Math.max(
             Math.abs(snapshot?.contribution ?? 0),
             Math.abs(snapshot?.gradient ?? 0) * 1.8,
             Math.abs(weight) * 0.18
           );
-          const pulseMaterial = new THREE.MeshStandardMaterial({
-            color: "#0891b2",
-            emissive: "#0891b2",
-            emissiveIntensity: 0.68,
-            transparent: true,
-            opacity: 0,
-            roughness: 0.24,
+          const forwardLane = signalLane(fromPosition, toPosition, 1);
+          const backwardLane = signalLane(toPosition, fromPosition, 1);
+          signalDefinitions.push({
+            id,
+            forwardFrom: forwardLane.from,
+            forwardTo: forwardLane.to,
+            backwardFrom: backwardLane.from,
+            backwardTo: backwardLane.to,
+            forwardDelay: layerIndex * 0.5 + (signalCount % 16) * 0.028,
+            backwardDelay:
+              (network.weights.length - 1 - layerIndex) * 0.5 + (signalCount % 16) * 0.028,
+            duration: 1.75 + layerCount * 0.1,
+            radius: 0.038 + Math.min(0.045, pulseStrength * 0.13),
           });
-          const pulse = new THREE.Mesh(
-            new THREE.SphereGeometry(0.032 + Math.min(0.055, pulseStrength * 0.16), 14, 14),
-            pulseMaterial
-          ) as InteractiveObject;
-          pulse.visible = false;
-          pulse.userData.pulse = {
-            from: fromPosition.clone(),
-            to: toPosition.clone(),
-            forwardDelay: layerIndex * 0.42 + (pulseCount % 18) * 0.035,
-            backwardDelay: (network.weights.length - 1 - layerIndex) * 0.42 + (pulseCount % 18) * 0.035,
-            duration: 2.35 + layerCount * 0.12,
-          };
-          pulseCount += 1;
-          pulseObjects.push(pulse);
-          scene.add(pulse);
+          signalCount += 1;
         }
       });
     });
@@ -562,7 +609,8 @@ export function ModelSurface3D({
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     const pickables: THREE.Object3D[] = [];
-    const pulseObjects: THREE.Object3D[] = [];
+    const signalDefinitions: SignalDefinition[] = [];
+    const activeParticles = new Map<string, SignalParticle>();
 
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor("#f8fbff", 1);
@@ -611,7 +659,7 @@ export function ModelSurface3D({
         visualizationMode,
         selected,
         pickables,
-        pulseObjects,
+        signalDefinitions,
       });
     }
 
@@ -641,6 +689,56 @@ export function ModelSurface3D({
       camera.updateProjectionMatrix();
     };
 
+    const createParticle = (
+      definition: SignalDefinition,
+      burst: PulseBurst
+    ): SignalParticle => {
+      const color = burst.phase === "forward" ? "#0891b2" : "#f97316";
+      const from = burst.phase === "forward" ? definition.forwardFrom : definition.backwardFrom;
+      const to = burst.phase === "forward" ? definition.forwardTo : definition.backwardTo;
+      const delay = burst.phase === "forward" ? definition.forwardDelay : definition.backwardDelay;
+      const key = `${burst.id}:${burst.phase}:${definition.id}`;
+      const trailPositions = new Float32Array(6);
+      trailPositions.set([from.x, from.y, from.z, from.x, from.y, from.z]);
+      const trailGeometry = new THREE.BufferGeometry();
+      trailGeometry.setAttribute("position", new THREE.BufferAttribute(trailPositions, 3));
+      const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(definition.radius, 18, 18),
+        new THREE.MeshStandardMaterial({
+          color,
+          emissive: color,
+          emissiveIntensity: 0.9,
+          roughness: 0.16,
+          transparent: true,
+          opacity: 0,
+        })
+      );
+      const trail = new THREE.Line(
+        trailGeometry,
+        new THREE.LineBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0,
+        })
+      );
+      mesh.visible = false;
+      trail.visible = false;
+      scene.add(trail);
+      scene.add(mesh);
+
+      return {
+        key,
+        phase: burst.phase,
+        from,
+        to,
+        duration: definition.duration,
+        startTime: burst.startedAt + delay,
+        mesh,
+        trail,
+        trailPositions,
+      };
+    };
+
     const animate = () => {
       controls.update();
       const now = performance.now() / 1000;
@@ -648,31 +746,50 @@ export function ModelSurface3D({
         .filter((burst) => now - burst.startedAt < PULSE_MAX_AGE_SECONDS)
         .sort((a, b) => b.id - a.id);
       pulseBurstsRef.current = liveBursts;
-      pulseObjects.forEach((object) => {
-        const pulse = (object as InteractiveObject).userData.pulse;
-        if (!pulse) return;
-        const activeBurst = liveBursts.find((burst) => {
-          const delay = burst.phase === "forward" ? pulse.forwardDelay : pulse.backwardDelay;
-          const local = now - burst.startedAt - delay;
-          return local >= 0 && local <= pulse.duration;
+
+      liveBursts.forEach((burst) => {
+        signalDefinitions.forEach((definition) => {
+          const delay = burst.phase === "forward" ? definition.forwardDelay : definition.backwardDelay;
+          const startTime = burst.startedAt + delay;
+          const age = now - startTime;
+          if (age < 0 || age > definition.duration) return;
+          const key = `${burst.id}:${burst.phase}:${definition.id}`;
+          if (activeParticles.has(key)) return;
+
+          if (activeParticles.size >= SIGNAL_PARTICLE_LIMIT) {
+            const oldest = activeParticles.values().next().value as SignalParticle | undefined;
+            if (oldest) {
+              activeParticles.delete(oldest.key);
+              disposeParticle(oldest, scene);
+            }
+          }
+
+          activeParticles.set(key, createParticle(definition, burst));
         });
-        if (!activeBurst) {
-          object.visible = false;
+      });
+
+      activeParticles.forEach((particle) => {
+        const rawProgress = (now - particle.startTime) / particle.duration;
+        if (rawProgress < 0) return;
+        if (rawProgress >= 1) {
+          activeParticles.delete(particle.key);
+          disposeParticle(particle, scene);
           return;
         }
-        const delay = activeBurst.phase === "forward" ? pulse.forwardDelay : pulse.backwardDelay;
-        const local = now - activeBurst.startedAt - delay;
-        object.visible = true;
-        const progress = local / pulse.duration;
-        const t = activeBurst.phase === "backward" ? 1 - easeInOut(progress) : easeInOut(progress);
-        object.position.copy(pulse.from).lerp(pulse.to, t);
-        const material = (object as THREE.Mesh).material;
-        if (!Array.isArray(material) && material instanceof THREE.MeshStandardMaterial) {
-          const color = activeBurst.phase === "forward" ? "#0891b2" : "#f97316";
-          material.color.set(color);
-          material.emissive.set(color);
-          material.opacity = 0.16 + Math.sin(Math.PI * progress) * 0.84;
-        }
+
+        const progress = easeInOut(rawProgress);
+        const head = particle.from.clone().lerp(particle.to, progress);
+        const tail = particle.from.clone().lerp(particle.to, Math.max(0, progress - 0.12));
+        const fade = smoothStep(Math.min(1, rawProgress * 4.5, (1 - rawProgress) * 4.5));
+        particle.mesh.visible = true;
+        particle.trail.visible = true;
+        particle.mesh.position.copy(head);
+        particle.mesh.scale.setScalar(0.78 + fade * 0.34);
+        particle.mesh.material.opacity = 0.08 + fade * 0.86;
+        particle.trail.material.opacity = fade * 0.42;
+        particle.trailPositions.set([tail.x, tail.y, tail.z, head.x, head.y, head.z]);
+        const position = particle.trail.geometry.getAttribute("position");
+        position.needsUpdate = true;
       });
       renderer.render(scene, camera);
       frame = window.requestAnimationFrame(animate);
@@ -727,6 +844,8 @@ export function ModelSurface3D({
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       renderer.domElement.removeEventListener("dblclick", onDoubleClick);
       renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
+      activeParticles.forEach((particle) => disposeParticle(particle, scene));
+      activeParticles.clear();
       clearScene(scene);
       renderer.dispose();
       if (cameraRef.current === camera) cameraRef.current = null;
