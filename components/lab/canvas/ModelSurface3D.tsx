@@ -30,6 +30,7 @@ interface ModelSurface3DProps {
   onHover: (selection: Selection | null) => void;
   onOpenDetail: (selection: Selection) => void;
   modelMeta?: ModelMeta;
+  chrome?: "full" | "minimal";
 }
 
 type SceneMode = "architecture" | "surface";
@@ -642,6 +643,7 @@ export function ModelSurface3D({
   onHover,
   onOpenDetail,
   modelMeta,
+  chrome = "full",
 }: ModelSurface3DProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -667,6 +669,7 @@ export function ModelSurface3D({
     : null;
   const sceneLabel =
     activeMode === "reward" ? "RL ödül grafiği" : activeMode === "architecture" ? "Ağ mimarisi" : "Karar yüzeyi";
+  const showChrome = chrome === "full";
 
   const resetCamera = () => {
     const camera = cameraRef.current;
@@ -1004,100 +1007,107 @@ export function ModelSurface3D({
       } overflow-hidden bg-[#f8fbff]`}
     >
       <div ref={hostRef} className="h-full w-full" data-testid="model-surface-3d" />
-      <div className="pointer-events-none absolute left-4 top-4 max-w-[320px] rounded-md border border-white/70 bg-white/90 px-3 py-2 shadow-sm backdrop-blur">
-        <div className="text-xs font-semibold text-[#18202f]">3D Simülasyon</div>
-        <div className="mt-0.5 truncate text-[11px] leading-4 text-[#526070]">
-          {sceneLabel} · {activeMode === "reward" ? `${episodeRewards.length} episode` : network.getLayerSizes().join(" -> ")}
-        </div>
-      </div>
-      <div className="absolute right-4 top-4 flex flex-col items-end gap-1.5">
-        <div className="flex rounded-md border border-[#cbd5e1] bg-white/90 p-1 shadow-sm backdrop-blur">
-          <button
-            type="button"
-            className={`h-7 rounded px-2.5 text-[11px] font-semibold ${
-              activeMode === "architecture" ? "bg-[#2563eb] text-white" : "text-[#334155] hover:bg-[#eef4ff]"
-            }`}
-            onClick={() => setMode("architecture")}
-          >
-            Ağ 3D
-          </button>
-          <button
-            type="button"
-            className={`h-7 rounded px-2.5 text-[11px] font-semibold ${
-              activeMode === "surface" ? "bg-[#2563eb] text-white" : "text-[#334155] hover:bg-[#eef4ff]"
-            }`}
-            disabled={!canShowSurface}
-            onClick={() => setMode("surface")}
-          >
-            Yüzey
-          </button>
-        </div>
-        <div className="flex rounded-md border border-[#cbd5e1] bg-white/90 p-1 shadow-sm backdrop-blur">
-          <button
-            type="button"
-            className="grid h-8 w-8 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
-            title="Yakınlaş"
-            aria-label="3D sahneye yakınlaş"
-            onClick={() => zoomCamera(0.82)}
-          >
-            <ZoomIn size={17} />
-          </button>
-          <button
-            type="button"
-            className="grid h-8 w-8 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
-            title="Uzaklaş"
-            aria-label="3D sahneden uzaklaş"
-            onClick={() => zoomCamera(1.18)}
-          >
-            <ZoomOut size={17} />
-          </button>
-          <button
-            type="button"
-            className="grid h-8 w-8 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
-            title="Kamerayı sıfırla"
-            aria-label="3D kamerayı sıfırla"
-            onClick={resetCamera}
-          >
-            <RotateCcw size={17} />
-          </button>
-          <button
-            type="button"
-            className="grid h-8 w-8 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
-            title={isFullscreen ? "Tam ekrandan çık" : "Tam ekran"}
-            aria-label={isFullscreen ? "3D tam ekrandan çık" : "3D tam ekran aç"}
-            onClick={() => setIsFullscreen((value) => !value)}
-          >
-            {isFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
-          </button>
-        </div>
-      </div>
-      <div className="pointer-events-none absolute bottom-4 left-4 max-w-[300px] rounded-md border border-white/70 bg-white/[0.9] px-3 py-2 text-[11px] leading-4 text-[#526070] shadow-sm backdrop-blur">
-        <div className="font-semibold text-[#18202f]">Sahne</div>
-        <div>
-          {activeMode === "reward"
-            ? `Faz: ${phase} · son ödül ${formatNumber(episodeRewards.at(-1) ?? 0, 3)}`
-            : `Faz: ${phase} · loss ${formatNumber(network.evaluateLoss(data), 5)}`}
-        </div>
-      </div>
-      <div className="pointer-events-auto absolute bottom-4 right-4 w-[min(320px,calc(100%-2rem))] rounded-md border border-[#dbe5f1] bg-white/[0.94] p-3 text-xs leading-5 text-[#526070] shadow-sm backdrop-blur">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#64748b]">Odak</div>
-            <div className="mt-0.5 truncate text-sm font-semibold text-[#18202f]">
-              {selectionTitle(activeSelection)}
-            </div>
+      {showChrome && (
+        <div className="pointer-events-none absolute left-4 top-4 max-w-[320px] rounded-md border border-white/70 bg-white/90 px-3 py-2 shadow-sm backdrop-blur">
+          <div className="text-xs font-semibold text-[#18202f]">3D Simülasyon</div>
+          <div className="mt-0.5 truncate text-[11px] leading-4 text-[#526070]">
+            {sceneLabel} · {activeMode === "reward" ? `${episodeRewards.length} episode` : network.getLayerSizes().join(" -> ")}
           </div>
-          {activeSelection ? (
+        </div>
+      )}
+      {showChrome && (
+        <div className="absolute right-4 top-4 flex flex-col items-end gap-1.5">
+          <div className="flex rounded-md border border-[#cbd5e1] bg-white/90 p-1 shadow-sm backdrop-blur">
             <button
               type="button"
-              className="rounded border border-[#cbd5e1] px-2 py-1 text-[11px] font-semibold text-[#334155] hover:bg-[#eef4ff]"
-              onClick={() => onOpenDetail(activeSelection)}
+              className={`h-7 rounded px-2.5 text-[11px] font-semibold ${
+                activeMode === "architecture" ? "bg-[#2563eb] text-white" : "text-[#334155] hover:bg-[#eef4ff]"
+              }`}
+              onClick={() => setMode("architecture")}
             >
-              Detay
+              Ağ 3D
             </button>
-          ) : null}
+            <button
+              type="button"
+              className={`h-7 rounded px-2.5 text-[11px] font-semibold ${
+                activeMode === "surface" ? "bg-[#2563eb] text-white" : "text-[#334155] hover:bg-[#eef4ff]"
+              }`}
+              disabled={!canShowSurface}
+              onClick={() => setMode("surface")}
+            >
+              Yüzey
+            </button>
+          </div>
+          <div className="flex rounded-md border border-[#cbd5e1] bg-white/90 p-1 shadow-sm backdrop-blur">
+            <button
+              type="button"
+              className="grid h-8 w-8 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
+              title="Yakınlaş"
+              aria-label="3D sahneye yakınlaş"
+              onClick={() => zoomCamera(0.82)}
+            >
+              <ZoomIn size={17} />
+            </button>
+            <button
+              type="button"
+              className="grid h-8 w-8 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
+              title="Uzaklaş"
+              aria-label="3D sahneden uzaklaş"
+              onClick={() => zoomCamera(1.18)}
+            >
+              <ZoomOut size={17} />
+            </button>
+            <button
+              type="button"
+              className="grid h-8 w-8 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
+              title="Kamerayı sıfırla"
+              aria-label="3D kamerayı sıfırla"
+              onClick={resetCamera}
+            >
+              <RotateCcw size={17} />
+            </button>
+            <button
+              type="button"
+              className="grid h-8 w-8 place-items-center rounded text-[#334155] hover:bg-[#eef4ff]"
+              title={isFullscreen ? "Tam ekrandan çık" : "Tam ekran"}
+              aria-label={isFullscreen ? "3D tam ekrandan çık" : "3D tam ekran aç"}
+              onClick={() => setIsFullscreen((value) => !value)}
+            >
+              {isFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+            </button>
+          </div>
         </div>
-        {selectedNeuron ? (
+      )}
+      {showChrome && (
+        <div className="pointer-events-none absolute bottom-4 left-4 max-w-[300px] rounded-md border border-white/70 bg-white/[0.9] px-3 py-2 text-[11px] leading-4 text-[#526070] shadow-sm backdrop-blur">
+          <div className="font-semibold text-[#18202f]">Sahne</div>
+          <div>
+            {activeMode === "reward"
+              ? `Faz: ${phase} · son ödül ${formatNumber(episodeRewards.at(-1) ?? 0, 3)}`
+              : `Faz: ${phase} · loss ${formatNumber(network.evaluateLoss(data), 5)}`}
+          </div>
+        </div>
+      )}
+      {showChrome && (
+        <div className="pointer-events-auto absolute bottom-4 right-4 w-[min(320px,calc(100%-2rem))] rounded-md border border-[#dbe5f1] bg-white/[0.94] p-3 text-xs leading-5 text-[#526070] shadow-sm backdrop-blur">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#64748b]">Odak</div>
+              <div className="mt-0.5 truncate text-sm font-semibold text-[#18202f]">
+                {selectionTitle(activeSelection)}
+              </div>
+            </div>
+            {activeSelection ? (
+              <button
+                type="button"
+                className="rounded border border-[#cbd5e1] px-2 py-1 text-[11px] font-semibold text-[#334155] hover:bg-[#eef4ff]"
+                onClick={() => onOpenDetail(activeSelection)}
+              >
+                Detay
+              </button>
+            ) : null}
+          </div>
+          {selectedNeuron ? (
           <div className="mt-2 space-y-2">
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded border border-[#e2e8f0] bg-[#f8fafc] p-2">
@@ -1135,7 +1145,7 @@ export function ModelSurface3D({
               </div>
             </details>
           </div>
-        ) : selectedEdge ? (
+          ) : selectedEdge ? (
           <div className="mt-2 space-y-2">
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded border border-[#e2e8f0] bg-[#f8fafc] p-2">
@@ -1164,12 +1174,13 @@ export function ModelSurface3D({
               </div>
             </details>
           </div>
-        ) : (
-          <div className="mt-2 rounded border border-[#e2e8f0] bg-[#f8fafc] px-2 py-1.5 text-[11px]">
-            Nöron veya bağlantı seçince hesap özeti burada görünür.
-          </div>
-        )}
-      </div>
+          ) : (
+            <div className="mt-2 rounded border border-[#e2e8f0] bg-[#f8fafc] px-2 py-1.5 text-[11px]">
+              Nöron veya bağlantı seçince hesap özeti burada görünür.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

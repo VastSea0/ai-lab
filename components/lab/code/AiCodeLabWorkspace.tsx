@@ -1,14 +1,11 @@
 "use client";
 
-import { Activity, ArrowLeft, BrainCircuit, Layers3, Play, RotateCcw } from "lucide-react";
-import Link from "next/link";
 import { useCallback, useMemo, useState } from "react";
 import { ModelSurface3D } from "@/components/lab/canvas/ModelSurface3D";
 import { AiCodeLab } from "@/components/lab/code/AiCodeLab";
-import { IconToolbar, MetricStrip, StatusToast, WorkbenchShell } from "@/components/lab/ui/Workbench";
+import { WorkbenchShell } from "@/components/lab/ui/Workbench";
 import {
   CURRICULUM_PROGRESS_KEY,
-  curriculumPhaseSummary,
   firstAvailableCurriculumTask,
   normalizeCurriculumProgress,
 } from "@/lib/ml/curriculum";
@@ -18,7 +15,6 @@ import type { DataPoint, Selection, TrainingPhase, TrainingTrace } from "@/lib/m
 import { formatNumber, NeuralNetwork } from "@/lib/ml/network";
 import type { Task, TaskId } from "@/lib/ml/tasks";
 import { getTask } from "@/lib/ml/tasks";
-import type { VisualizationMode } from "@/lib/ml/lab-types";
 
 interface ImportedModel {
   challenge: CurriculumTask;
@@ -189,7 +185,6 @@ export function AiCodeLabWorkspace() {
   const [selected, setSelected] = useState<Selection | null>(null);
   const [hovered, setHovered] = useState<Selection | null>(null);
   const [phase, setPhase] = useState<TrainingPhase>("idle");
-  const [visualizationMode, setVisualizationMode] = useState<VisualizationMode>("weights");
 
   const updateCurriculumProgress = useCallback((nextProgress: CurriculumProgress) => {
     const clean = normalizeCurriculumProgress(nextProgress);
@@ -221,173 +216,59 @@ export function AiCodeLabWorkspace() {
     }
   }, []);
 
+  const clearPreview = useCallback(() => {
+    setImported(null);
+    setSelected(null);
+    setHovered(null);
+    setImportError(null);
+  }, []);
+
   const activeSelection = hovered ?? selected;
-  const hasEpisodeRewards = Boolean(imported?.modelMeta?.episodeRewards?.length);
-  const activeVisualizationMode = visualizationMode === "rl-reward" && !hasEpisodeRewards ? "weights" : visualizationMode;
   const activeLoss = imported?.network.evaluateLoss(imported.data) ?? null;
   const layerText = useMemo(
     () => imported?.network.getLayerSizes().join(" → ") ?? "model bekleniyor",
     [imported]
   );
+  const lossText = activeLoss === null ? "-" : formatNumber(activeLoss, 5);
 
   return (
     <WorkbenchShell>
-      <div className="grid h-full min-h-0 grid-rows-[48px_1fr] overflow-hidden">
-        {/* Compact header */}
-        <header className="flex h-12 shrink-0 items-center justify-between border-b border-[#dbe3ee] bg-white px-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <Link
-              href="/"
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[#cbd5e1] bg-white text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
-              aria-label="Sandbox sayfasına dön"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-            </Link>
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#e8f0ff] text-[#2563eb]">
-              <BrainCircuit className="h-4 w-4" />
-            </div>
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold leading-4">AI Kod Labı</div>
-              <div className="truncate text-[10px] leading-3 text-[#607089]">Editörde kodla, ağı önizle, görevi tamamla</div>
-            </div>
-          </div>
-
-          <div className="flex min-w-0 items-center gap-2">
-            <CurriculumProgressHeader progress={curriculumProgress} />
-            <MetricStrip
-              items={[
-                { label: "Katman", value: layerText },
-                { label: "Loss", value: activeLoss === null ? "-" : formatNumber(activeLoss, 6) },
-              ]}
-            />
-            <IconToolbar label="Kod labı ayarları" className="shrink-0">
-              <select
-                className="h-7 rounded border-0 bg-transparent px-1.5 text-[11px] font-semibold text-[#334155] outline-none"
-                value={activeVisualizationMode}
-                onChange={(event) => setVisualizationMode(event.target.value as VisualizationMode)}
-                aria-label="Görselleştirme modu"
-              >
-                <option value="weights">Ağırlık</option>
-                <option value="gradients">Gradient</option>
-                <option value="corrections">Düzeltme</option>
-                <option value="rl-reward" disabled={!hasEpisodeRewards}>
-                  RL Ödül
-                </option>
-              </select>
-            </IconToolbar>
-            <button
-              type="button"
-              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-[#cbd5e1] bg-white px-2 text-[11px] font-semibold text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
-              onClick={() => {
-                setPhase("forward");
-                window.setTimeout(() => setPhase("backward"), 620);
-                window.setTimeout(() => setPhase("idle"), 1380);
-              }}
-            >
-              <Play className="h-3.5 w-3.5" />
-              Akışı Oynat
-            </button>
-          </div>
-        </header>
-
-        {/* Workspace content - always fills remaining height, never scrolls */}
-        <div className="min-h-0">
-          <AiCodeLab
-            onApplyResult={applyResult}
-            onLiveResult={applyLiveResult}
-            applyLabel="Görselleştir"
-            progress={curriculumProgress}
-            onProgressChange={updateCurriculumProgress}
-            preview={
-              <section className="relative h-full min-h-0 overflow-hidden bg-[#eef3f8]">
-                {imported ? (
-                  <ModelSurface3D
-                    task={imported.task}
-                    network={imported.network}
-                    data={imported.data}
-                    trace={imported.trace}
-                    phase={phase}
-                    visualizationMode={activeVisualizationMode}
-                    selected={selected}
-                    hovered={hovered}
-                    onSelect={setSelected}
-                    onHover={setHovered}
-                    onOpenDetail={setSelected}
-                    modelMeta={imported.modelMeta}
-                  />
-                ) : (
-                  <div className="flex h-full items-center justify-center p-4">
-                    <div className="max-w-[320px] rounded-lg border border-[#dbe3ee] bg-white/90 px-4 py-3 text-center shadow-sm backdrop-blur">
-                      <div className="flex items-center justify-center gap-2 text-xs font-semibold text-[#18202f]">
-                        <Layers3 className="h-5 w-5 text-[#2563eb]" />
-                        Model Simülasyonu
-                      </div>
-                      <div className="mt-1 text-[11px] leading-4 text-[#526070]">Bir görev seçin veya kod yazmaya başlayın. Canlı önizleme burada görünecek.</div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Floating info toast */}
-                <div className="absolute bottom-3 right-3 z-20 w-[300px]">
-                  <StatusToast
-                    title={imported?.challenge.title ?? "Python sonucu bekleniyor"}
-                    icon={<Activity className="h-3.5 w-3.5" />}
-                  >
-                    <div>{selectionSummary(activeSelection, imported?.trace ?? null)}</div>
-                    {importError && <div className="mt-1 text-[#b91c1c]">{importError}</div>}
-                    {imported && (
-                      <div className="mt-1 flex items-center gap-2">
-                        <Layers3 className="h-3.5 w-3.5 text-[#64748b]" />
-                        {imported.network.getLayerSizes().join(" -> ")}
-                      </div>
-                    )}
-                  </StatusToast>
-                </div>
-
-                {imported && (
-                  <button
-                    type="button"
-                    className="absolute left-3 top-3 z-20 inline-flex h-8 items-center gap-1.5 rounded-md border border-[#cbd5e1] bg-white/90 px-2.5 text-[11px] font-semibold text-[#334155] shadow-sm backdrop-blur hover:border-[#2563eb] hover:text-[#2563eb]"
-                    onClick={() => {
-                      setImported(null);
-                      setSelected(null);
-                      setHovered(null);
-                      setImportError(null);
-                    }}
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    Sahneyi temizle
-                  </button>
-                )}
-              </section>
-            }
-          />
-        </div>
-      </div>
+      <AiCodeLab
+        onApplyResult={applyResult}
+        onLiveResult={applyLiveResult}
+        onClearPreview={clearPreview}
+        applyLabel="Görselleştir"
+        progress={curriculumProgress}
+        onProgressChange={updateCurriculumProgress}
+        layerSummary={layerText}
+        lossSummary={lossText}
+        selectionSummary={importError ?? selectionSummary(activeSelection, imported?.trace ?? null)}
+        preview={
+          <section className="h-full min-h-0 overflow-hidden bg-[#fafbff]">
+            {imported ? (
+              <ModelSurface3D
+                task={imported.task}
+                network={imported.network}
+                data={imported.data}
+                trace={imported.trace}
+                phase={phase}
+                visualizationMode="weights"
+                selected={selected}
+                hovered={hovered}
+                onSelect={setSelected}
+                onHover={setHovered}
+                onOpenDetail={setSelected}
+                modelMeta={imported.modelMeta}
+                chrome="minimal"
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center px-4 text-center text-[11px] leading-5 text-[#a0a4c0]">
+                Model önizlemesi koddan üretilecek.
+              </div>
+            )}
+          </section>
+        }
+      />
     </WorkbenchShell>
-  );
-}
-
-function CurriculumProgressHeader({ progress }: { progress: CurriculumProgress }) {
-  const summary = curriculumPhaseSummary(progress);
-  return (
-    <div className="hidden min-w-[180px] grid-cols-3 gap-2 rounded-md border border-[#dbe3ee] bg-white px-2 py-1.5 lg:grid">
-      {summary.map(({ phase, completed, total }) => (
-        <div key={phase} className="min-w-0">
-          <div className="flex items-center justify-between gap-1 text-[9px] font-bold uppercase tracking-[0.08em] text-[#64748b]">
-            <span>P{phase}</span>
-            <span>
-              {completed}/{total}
-            </span>
-          </div>
-          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#e2e8f0]">
-            <div
-              className="h-full rounded-full bg-[#2563eb]"
-              style={{ width: `${Math.round((completed / Math.max(1, total)) * 100)}%` }}
-            />
-          </div>
-        </div>
-      ))}
-    </div>
   );
 }

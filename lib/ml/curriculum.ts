@@ -88,8 +88,8 @@ class MyNeuralNetwork(nn.Module):
         x = self.output_layer(x)
         return x
 
-model = MyNeuralNetwork(input_size=10, hidden_size=16, output_size=1)
-dummy_input = torch.randn(1, 10)
+model = MyNeuralNetwork(input_size=3, hidden_size=16, output_size=1)
+dummy_input = torch.randn(1, 3)
 prediction = model(dummy_input)
 
 print("output tensor shape:", prediction.shape)

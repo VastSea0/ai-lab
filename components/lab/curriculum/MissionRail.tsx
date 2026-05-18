@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, Circle, LockKeyhole, PlayCircle } from "lucide-react";
+import { BrainCircuit, Check, LockKeyhole, Play } from "lucide-react";
 import {
   CURRICULUM,
   curriculumPhaseSummary,
@@ -10,16 +10,17 @@ import {
 import type { CurriculumPhase, CurriculumProgress, CurriculumTask } from "@/lib/ml/types";
 
 const phaseTitles: Record<CurriculumPhase, string> = {
-  1: "Neural Network Basics",
-  2: "Training Basics",
-  3: "Applied Models",
+  1: "Temel Ağlar",
+  2: "Eğitim",
+  3: "Uygulamalı",
 };
 
-const phaseColors: Record<CurriculumPhase, string> = {
-  1: "#2563eb",
-  2: "#059669",
-  3: "#d97706",
-};
+function completedTotal(progress: CurriculumProgress) {
+  return {
+    completed: progress.completedTaskIds.length,
+    total: CURRICULUM.length,
+  };
+}
 
 interface MissionRailProps {
   selectedTaskId: string;
@@ -29,117 +30,101 @@ interface MissionRailProps {
 
 export function MissionRail({ selectedTaskId, progress, onSelectTask }: MissionRailProps) {
   const summary = curriculumPhaseSummary(progress);
+  const totalProgress = completedTotal(progress);
+  const progressPercent = Math.round((totalProgress.completed / Math.max(1, totalProgress.total)) * 100);
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto bg-[#f4f7fb] px-2 py-3">
-      <div className="mb-3 px-1">
-        <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#94a3b8]">Course Path</div>
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
+      <div className="border-b border-[#e8eaf2] px-4 py-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#6366f1] text-white">
+            <BrainCircuit className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-[#1a1c2e]">AI Kod Labı</div>
+            <div className="truncate text-[11px] text-[#9599b8]">Machine Learning Studio</div>
+          </div>
+        </div>
+        <div className="mt-4 flex items-center justify-between text-[10px]">
+          <span className="font-medium text-[#9599b8]">Genel ilerleme</span>
+          <span className="font-semibold text-[#6366f1]">
+            {totalProgress.completed} / {totalProgress.total}
+          </span>
+        </div>
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#eef0f8]">
+          <div className="h-full rounded-full bg-[#6366f1]" style={{ width: `${progressPercent}%` }} />
+        </div>
       </div>
 
-      {summary.map(({ phase, completed, total }) => {
-        const phaseUnlocked = progress.unlockedPhases.includes(phase);
-        const phaseTasks = tasksForPhase(phase);
-        const color = phaseColors[phase];
+      <div className="min-h-0 flex-1 overflow-y-auto py-3">
+        {summary.map(({ phase, completed, total }) => {
+          const phaseTasks = tasksForPhase(phase);
+          const phaseUnlocked = progress.unlockedPhases.includes(phase);
 
-        return (
-          <div key={phase} className="mb-4">
-            {/* Phase header */}
-            <div className="mb-2 flex items-center gap-2 px-1">
-              <div
-                className="flex h-5 w-5 items-center justify-center rounded text-[10px] font-bold text-white"
-                style={{ backgroundColor: color }}
-              >
-                {phase}
+          return (
+            <section key={phase} className="pb-4">
+              <div className="px-4 pb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#c0c4dc]">
+                Bölüm {phase} · {phaseTitles[phase]}
               </div>
-              <div className="min-w-0">
-                <div className="truncate text-[11px] font-bold text-[#18202f]">{phaseTitles[phase]}</div>
-                <div className="text-[10px] font-semibold text-[#64748b]">
-                  {completed}/{total}
-                </div>
-              </div>
-            </div>
+              <div>
+                {phaseTasks.map((task) => {
+                  const unlocked = phaseUnlocked && isCurriculumTaskUnlocked(task, progress);
+                  const completedTask = progress.completedTaskIds.includes(task.id);
+                  const current = selectedTaskId === task.id;
 
-            {/* Mission path */}
-            <div className="relative pl-1">
-              {phaseTasks.map((task, index) => {
-                const unlocked = phaseUnlocked && isCurriculumTaskUnlocked(task, progress);
-                const completedTask = progress.completedTaskIds.includes(task.id);
-                const current = task.id === selectedTaskId;
-                const isLast = index === phaseTasks.length - 1;
-
-                return (
-                  <div key={task.id} className="relative">
-                    {/* Connector line */}
-                    {!isLast && (
-                      <div
-                        className="absolute left-[14px] top-[26px] w-[2px]"
-                        style={{
-                          height: "calc(100% - 8px)",
-                          backgroundColor: completedTask ? color : "#dbe3ee",
-                        }}
-                      />
-                    )}
-
+                  return (
                     <button
+                      key={task.id}
                       type="button"
                       disabled={!unlocked}
                       onClick={() => onSelectTask(task)}
-                      className={`group relative mb-1 flex w-full items-start gap-2.5 rounded-lg border px-2 py-2 text-left transition ${
+                      className={`grid w-full grid-cols-[24px_1fr] items-start gap-3 border-r-2 px-4 py-2.5 text-left transition ${
                         current
-                          ? "border-[#2563eb]/40 bg-white shadow-sm ring-1 ring-[#2563eb]/30"
-                          : unlocked
-                            ? "border-[#dbe3ee] bg-white hover:border-[#2563eb]/50"
-                            : "border-transparent opacity-60"
-                      }`}
+                          ? "border-[#6366f1] bg-[#f0f1fe]"
+                          : "border-transparent hover:bg-[#f8f9fe]"
+                      } ${unlocked ? "" : "cursor-not-allowed opacity-55"}`}
                     >
-                      {/* Mission node circle */}
-                      <div className="relative mt-0.5 shrink-0">
+                      <span
+                        className={`mt-0.5 flex h-5 w-5 items-center justify-center rounded-full border ${
+                          completedTask
+                            ? "border-[#6366f1] bg-[#6366f1] text-white"
+                            : current
+                              ? "border-[#6366f1] bg-[#eef0fe] text-[#6366f1]"
+                              : unlocked
+                                ? "border-[#d7daf0] bg-white text-[#9599b8]"
+                                : "border-[#e2e4ed] bg-[#f3f4f8] text-[#c0c4dc]"
+                        }`}
+                      >
                         {completedTask ? (
-                          <div
-                            className="flex h-5 w-5 items-center justify-center rounded-full text-white"
-                            style={{ backgroundColor: color }}
-                          >
-                            <CheckCircle2 className="h-3.5 w-3.5" />
-                          </div>
+                          <Check className="h-3 w-3" />
                         ) : current ? (
-                          <div
-                            className="flex h-5 w-5 items-center justify-center rounded-full border-2 bg-white"
-                            style={{ borderColor: color }}
-                          >
-                            <div className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
-                          </div>
+                          <Play className="h-2.5 w-2.5" />
                         ) : unlocked ? (
-                          <div className="flex h-5 w-5 items-center justify-center rounded-full border-2 border-[#cbd5e1] bg-white group-hover:border-[#2563eb]/50">
-                            <PlayCircle className="h-3 w-3 text-[#64748b]" />
-                          </div>
+                          <span className="h-2 w-2 rounded-full bg-current" />
                         ) : (
-                          <div className="flex h-5 w-5 items-center justify-center rounded-full border-2 border-[#e2e8f0] bg-[#f8fafc]">
-                            <LockKeyhole className="h-3 w-3 text-[#cbd5e1]" />
-                          </div>
+                          <LockKeyhole className="h-3 w-3" />
                         )}
-                      </div>
-
-                      {/* Mission text */}
-                      <div className="min-w-0">
-                        <div
-                          className={`truncate text-[11px] font-semibold leading-4 ${
-                            current ? "text-[#2563eb]" : completedTask ? "text-[#18202f]" : "text-[#334155]"
+                      </span>
+                      <span className="min-w-0">
+                        <span
+                          className={`block truncate text-[13px] font-semibold leading-5 ${
+                            current ? "text-[#5254c8]" : "text-[#3d4069]"
                           }`}
                         >
                           {task.title}
-                        </div>
-                        <div className="mt-0.5 line-clamp-2 text-[10px] leading-[14px] text-[#64748b]">
-                          {task.description}
-                        </div>
-                      </div>
+                        </span>
+                        <span className="block truncate text-[11px] leading-4 text-[#a0a4c0]">
+                          {completedTask ? "Görev tamamlandı" : unlocked ? `${completed}/${total} bölüm ilerlemesi` : "Kilitli"}
+                        </span>
+                      </span>
                     </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
+      </div>
     </div>
   );
 }
