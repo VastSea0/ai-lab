@@ -5,6 +5,7 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { getAiCodeLabChallenge, type PythonLabResult, type PythonLabRunResponse } from "@/lib/ml/code-lab";
 import { getCurriculumTask } from "@/lib/ml/curriculum";
+import { analyzeTorchStructure } from "@/lib/ml/live-code";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -159,36 +160,52 @@ export async function POST(request: Request) {
     await writeFile(filePath, code, "utf8");
     const response = await runPython(filePath, tempDir);
     const challengeId = curriculumTask?.id ?? challenge?.id ?? body.challengeId;
+    const liveAnalysis = curriculumTask ? analyzeTorchStructure(code, curriculumTask.requirements) : null;
+    const result: PythonLabResult | undefined =
+      response.result
+        ? { ...response.result, sourceCode: code }
+        : response.ok && liveAnalysis?.modelMeta
+          ? {
+              title: curriculumTask?.title,
+              sourceCode: code,
+              modelMeta: liveAnalysis.modelMeta,
+              metrics: [{ label: "live checks", value: `${liveAnalysis.checks.filter((check) => check.passed).length}/${liveAnalysis.checks.length}` }],
+              notes: [liveAnalysis.outputPreview ?? "Model structure parsed from code."],
+            }
+          : undefined;
+    const responseWithResult = {
+      ...response,
+      result,
+      modelMeta: result?.modelMeta,
+    };
+
     if (!curriculumTask) {
       return NextResponse.json({
-        ...response,
+        ...responseWithResult,
         challengeId,
-        modelMeta: response.result?.modelMeta,
       });
     }
 
-    if (!response.ok || !response.result) {
+    if (!responseWithResult.ok || !responseWithResult.result) {
       return NextResponse.json({
-        ...response,
+        ...responseWithResult,
         challengeId,
-        modelMeta: response.result?.modelMeta,
         passed: false,
-        feedback: response.error
-          ? [`Run did not complete cleanly: ${response.error}`]
+        feedback: responseWithResult.error
+          ? [`Run did not complete cleanly: ${responseWithResult.error}`]
           : ["No JSON result was emitted between the AI_LAB_RESULT markers."],
       });
     }
 
     const verification = curriculumTask.verify({
-      ...response,
+      ...responseWithResult,
       challengeId,
-      modelMeta: response.result.modelMeta,
+      modelMeta: responseWithResult.result.modelMeta,
     });
 
     return NextResponse.json({
-      ...response,
+      ...responseWithResult,
       challengeId,
-      modelMeta: response.result.modelMeta,
       passed: verification.passed,
       feedback: verification.feedback,
     });

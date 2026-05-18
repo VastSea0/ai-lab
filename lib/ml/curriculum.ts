@@ -7,6 +7,7 @@ import type {
   PythonLabRunResponse,
   VerifyResult,
 } from "./types";
+import { analyzeTorchStructure } from "./live-code";
 
 export const CURRICULUM_PROGRESS_KEY = "curriculum_progress";
 
@@ -67,6 +68,32 @@ function activations(meta: ModelMeta | undefined) {
 function twoDimensionalArray(value: unknown) {
   return Array.isArray(value) && value.length > 0 && value.every((row) => Array.isArray(row));
 }
+
+const STRUCTURE_STARTER = String.raw`import torch
+import torch.nn as nn
+
+class MyNeuralNetwork(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size):
+        super().__init__()
+        self.layer1 = nn.Linear(input_size, hidden_size)
+        self.layer2 = nn.Linear(hidden_size, hidden_size)
+        self.output_layer = nn.Linear(hidden_size, output_size)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        x = self.layer1(x)
+        x = self.relu(x)
+        x = self.layer2(x)
+        x = self.relu(x)
+        x = self.output_layer(x)
+        return x
+
+model = MyNeuralNetwork(input_size=10, hidden_size=16, output_size=1)
+dummy_input = torch.randn(1, 10)
+prediction = model(dummy_input)
+
+print("output tensor shape:", prediction.shape)
+`;
 
 const LINEAR_REGRESSION_STARTER = String.raw`import json
 import numpy as np
@@ -744,6 +771,35 @@ print("AI_LAB_RESULT_END")
 `;
 
 export const CURRICULUM: CurriculumTask[] = [
+  {
+    id: "phase1-create-neural-network",
+    phase: 1,
+    title: "Create A Neural Network",
+    description: "Build a PyTorch nn.Module with 3 input neurons, two hidden layers, ReLU, and 1 output neuron.",
+    requirements: {
+      modelType: "mlp",
+      inputSize: 3,
+      hiddenLayers: 2,
+      hiddenSize: 16,
+      outputSize: 1,
+      activations: ["relu"],
+    },
+    starterCode: STRUCTURE_STARTER,
+    verify(response) {
+      const sourceCode = typeof response.result?.sourceCode === "string" ? response.result.sourceCode : "";
+      const analysis = analyzeTorchStructure(sourceCode, {
+        inputSize: 3,
+        hiddenLayers: 2,
+        hiddenSize: 16,
+        outputSize: 1,
+        activations: ["relu"],
+      });
+      return {
+        passed: analysis.passed,
+        feedback: analysis.feedback.length ? analysis.feedback : ["Write a PyTorch nn.Module with the requested shape."],
+      };
+    },
+  },
   {
     id: "phase1-linear-regression",
     phase: 1,

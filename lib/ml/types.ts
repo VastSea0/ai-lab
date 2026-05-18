@@ -27,6 +27,10 @@ export interface CurriculumProgress {
 
 export interface CurriculumRequirements {
   modelType?: ModelMetaType;
+  inputSize?: number;
+  hiddenLayers?: number;
+  hiddenSize?: number;
+  outputSize?: number;
   featureShape?: number[];
   targetShape?: number[];
   scoreThreshold?: number;
@@ -54,6 +58,21 @@ export interface CurriculumTask {
   requirements: CurriculumRequirements;
   starterCode: string;
   verify: (response: PythonLabRunResponse) => VerifyResult;
+}
+
+export interface LiveCodeCheck {
+  id: string;
+  label: string;
+  passed: boolean;
+  detail: string;
+}
+
+export interface LiveCodeAnalysis {
+  modelMeta?: ModelMeta;
+  checks: LiveCodeCheck[];
+  passed: boolean;
+  feedback: string[];
+  outputPreview?: string;
 }
 
 export type ModelMetaType = "mlp" | "cnn" | "lstm" | "sklearn" | "dqn";

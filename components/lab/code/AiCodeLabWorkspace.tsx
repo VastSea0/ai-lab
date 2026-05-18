@@ -9,8 +9,10 @@ import { IconToolbar, MetricStrip, StatusToast, WorkbenchShell } from "@/compone
 import {
   CURRICULUM_PROGRESS_KEY,
   curriculumPhaseSummary,
+  firstAvailableCurriculumTask,
   normalizeCurriculumProgress,
 } from "@/lib/ml/curriculum";
+import { analyzeTorchStructure } from "@/lib/ml/live-code";
 import type { CurriculumProgress, CurriculumTask, ModelMeta, PythonLabResult } from "@/lib/ml/types";
 import type { DataPoint, Selection, TrainingPhase, TrainingTrace } from "@/lib/ml/network";
 import { formatNumber, NeuralNetwork } from "@/lib/ml/network";
@@ -142,6 +144,34 @@ function buildImportedModel(
   };
 }
 
+function buildLiveResult(task: CurriculumTask, code: string): PythonLabResult | null {
+  const analysis = analyzeTorchStructure(code, task.requirements);
+  if (!analysis.modelMeta) return null;
+  return {
+    title: task.title,
+    sourceCode: code,
+    modelMeta: analysis.modelMeta,
+    metrics: [
+      {
+        label: "checks",
+        value: `${analysis.checks.filter((check) => check.passed).length}/${analysis.checks.length}`,
+      },
+    ],
+    notes: analysis.outputPreview ? [analysis.outputPreview] : undefined,
+  };
+}
+
+function initialImportedModel(): ImportedModel | null {
+  try {
+    const progress = readCurriculumProgress();
+    const task = firstAvailableCurriculumTask(progress);
+    const result = buildLiveResult(task, task.starterCode);
+    return result ? buildImportedModel(task, result, 9421) : null;
+  } catch {
+    return null;
+  }
+}
+
 function selectionSummary(selection: Selection | null, trace: TrainingTrace | null) {
   if (!selection || !trace) return "Henüz seçim yok";
   if (selection.type === "neuron") {
@@ -157,7 +187,7 @@ function selectionSummary(selection: Selection | null, trace: TrainingTrace | nu
 }
 
 export function AiCodeLabWorkspace() {
-  const [imported, setImported] = useState<ImportedModel | null>(null);
+  const [imported, setImported] = useState<ImportedModel | null>(() => initialImportedModel());
   const [importError, setImportError] = useState<string | null>(null);
   const [curriculumProgress, setCurriculumProgress] = useState<CurriculumProgress>(() => readCurriculumProgress());
   const [selected, setSelected] = useState<Selection | null>(null);
@@ -182,6 +212,16 @@ export function AiCodeLabWorkspace() {
       window.setTimeout(() => setPhase("idle"), 1300);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Model görselleştirilemedi.");
+    }
+  }, []);
+
+  const applyLiveResult = useCallback((challenge: CurriculumTask, result: PythonLabResult) => {
+    try {
+      const next = buildImportedModel(challenge, result, 9421);
+      setImported(next);
+      setImportError(null);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Canlı model görselleştirilemedi.");
     }
   }, []);
 
@@ -213,7 +253,7 @@ export function AiCodeLabWorkspace() {
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold">AI Kod Labı</div>
               <div className="truncate text-[11px] text-[#607089]">
-                Python kütüphaneleriyle kodla, sonucu simülasyona dönüştür
+                Editörde kodla, ağı önizle, görevi tamamla
               </div>
             </div>
           </div>
@@ -256,76 +296,76 @@ export function AiCodeLabWorkspace() {
           </div>
         </header>
 
-        <div className="grid min-h-0 grid-cols-[clamp(320px,33vw,390px)_minmax(0,1fr)] gap-px bg-[#d7dde8]">
-          <aside className="min-h-0 overflow-y-auto bg-white px-3 py-3">
-            <AiCodeLab
-              onApplyResult={applyResult}
-              applyLabel="Görselleştir"
-              progress={curriculumProgress}
-              onProgressChange={updateCurriculumProgress}
-            />
-          </aside>
-
-          <section className="relative min-h-0 overflow-hidden bg-[#eef3f8]">
-            {imported ? (
-              <ModelSurface3D
-                task={imported.task}
-                network={imported.network}
-                data={imported.data}
-                trace={imported.trace}
-                phase={phase}
-                visualizationMode={activeVisualizationMode}
-                selected={selected}
-                hovered={hovered}
-                onSelect={setSelected}
-                onHover={setHovered}
-                onOpenDetail={setSelected}
-                modelMeta={imported.modelMeta}
-              />
-            ) : (
-              <div className="flex h-full items-start justify-start p-5">
-                <div className="max-w-[420px] rounded-md border border-[#dbe3ee] bg-white/88 px-4 py-3 shadow-sm backdrop-blur">
-                  <div className="flex items-center gap-2 text-xs font-semibold">
-                    <Cuboid className="h-5 w-5 text-[#2563eb]" />
-                    Model Simülasyonu
+        <div className="min-h-0 bg-[#d7dde8]">
+          <AiCodeLab
+            onApplyResult={applyResult}
+            onLiveResult={applyLiveResult}
+            applyLabel="Görselleştir"
+            progress={curriculumProgress}
+            onProgressChange={updateCurriculumProgress}
+            preview={
+              <section className="relative h-full min-h-0 overflow-hidden bg-[#eef3f8]">
+                {imported ? (
+                  <ModelSurface3D
+                    task={imported.task}
+                    network={imported.network}
+                    data={imported.data}
+                    trace={imported.trace}
+                    phase={phase}
+                    visualizationMode={activeVisualizationMode}
+                    selected={selected}
+                    hovered={hovered}
+                    onSelect={setSelected}
+                    onHover={setHovered}
+                    onOpenDetail={setSelected}
+                    modelMeta={imported.modelMeta}
+                  />
+                ) : (
+                  <div className="flex h-full items-start justify-start p-5">
+                    <div className="max-w-[420px] rounded-md border border-[#dbe3ee] bg-white/88 px-4 py-3 shadow-sm backdrop-blur">
+                      <div className="flex items-center gap-2 text-xs font-semibold">
+                        <Cuboid className="h-5 w-5 text-[#2563eb]" />
+                        Model Simülasyonu
+                      </div>
+                      <div className="mt-1 text-xs leading-5 text-[#526070]">Model bekleniyor.</div>
+                    </div>
                   </div>
-                  <div className="mt-1 text-xs leading-5 text-[#526070]">Model bekleniyor.</div>
-                </div>
-              </div>
-            )}
+                )}
 
-            <div className="absolute bottom-4 right-4 z-20 w-[320px]">
-              <StatusToast
-                title={imported?.challenge.title ?? "Python sonucu bekleniyor"}
-                icon={<Activity className="h-3.5 w-3.5" />}
-              >
-              <div>{selectionSummary(activeSelection, imported?.trace ?? null)}</div>
-              {importError && <div className="mt-1 text-[#b91c1c]">{importError}</div>}
-              {imported && (
-                <div className="mt-1 flex items-center gap-2">
-                  <Layers3 className="h-3.5 w-3.5 text-[#64748b]" />
-                  {imported.network.getLayerSizes().join(" -> ")}
+                <div className="absolute bottom-4 right-4 z-20 w-[320px]">
+                  <StatusToast
+                    title={imported?.challenge.title ?? "Python sonucu bekleniyor"}
+                    icon={<Activity className="h-3.5 w-3.5" />}
+                  >
+                    <div>{selectionSummary(activeSelection, imported?.trace ?? null)}</div>
+                    {importError && <div className="mt-1 text-[#b91c1c]">{importError}</div>}
+                    {imported && (
+                      <div className="mt-1 flex items-center gap-2">
+                        <Layers3 className="h-3.5 w-3.5 text-[#64748b]" />
+                        {imported.network.getLayerSizes().join(" -> ")}
+                      </div>
+                    )}
+                  </StatusToast>
                 </div>
-              )}
-              </StatusToast>
-            </div>
 
-            {imported && (
-              <button
-                type="button"
-                className="absolute left-5 top-5 z-20 inline-flex h-9 items-center gap-2 rounded-md border border-[#cbd5e1] bg-white/90 px-3 text-xs font-semibold text-[#334155] shadow-sm backdrop-blur hover:border-[#2563eb] hover:text-[#2563eb]"
-                onClick={() => {
-                  setImported(null);
-                  setSelected(null);
-                  setHovered(null);
-                  setImportError(null);
-                }}
-              >
-                <RotateCcw className="h-4 w-4" />
-                Sahneyi temizle
-              </button>
-            )}
-          </section>
+                {imported && (
+                  <button
+                    type="button"
+                    className="absolute left-5 top-5 z-20 inline-flex h-9 items-center gap-2 rounded-md border border-[#cbd5e1] bg-white/90 px-3 text-xs font-semibold text-[#334155] shadow-sm backdrop-blur hover:border-[#2563eb] hover:text-[#2563eb]"
+                    onClick={() => {
+                      setImported(null);
+                      setSelected(null);
+                      setHovered(null);
+                      setImportError(null);
+                    }}
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    Sahneyi temizle
+                  </button>
+                )}
+              </section>
+            }
+          />
         </div>
       </div>
     </WorkbenchShell>

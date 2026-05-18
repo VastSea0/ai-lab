@@ -20,15 +20,22 @@ export function CurriculumPanel({
   selectedTaskId,
   progress,
   onSelectTask,
+  compact = false,
 }: {
   selectedTaskId: string;
   progress: CurriculumProgress;
   onSelectTask: (task: CurriculumTask) => void;
+  compact?: boolean;
 }) {
   const summary = curriculumPhaseSummary(progress);
 
   return (
-    <CompactPanel title="Curriculum" icon={<PlayCircle className="h-4 w-4" />} bodyClassName="space-y-2">
+    <CompactPanel
+      title="Curriculum"
+      icon={<PlayCircle className="h-4 w-4" />}
+      className="h-full overflow-hidden"
+      bodyClassName="h-[calc(100%-41px)] space-y-2 overflow-y-auto"
+    >
       {summary.map(({ phase, completed, total }) => {
         const phaseUnlocked = progress.unlockedPhases.includes(phase);
         const phaseTasks = tasksForPhase(phase);
@@ -76,9 +83,11 @@ export function CurriculumPanel({
                     </span>
                     <span className="min-w-0">
                       <span className="block truncate text-xs font-semibold text-[#18202f]">{task.title}</span>
-                      <span className="mt-1 line-clamp-2 block text-[11px] leading-4 text-[#526070]">
-                        {task.description}
-                      </span>
+                      {!compact && (
+                        <span className="mt-1 line-clamp-2 block text-[11px] leading-4 text-[#526070]">
+                          {task.description}
+                        </span>
+                      )}
                     </span>
                   </button>
                 );
