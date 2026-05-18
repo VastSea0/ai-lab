@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, ArrowLeft, BrainCircuit, Cuboid, Layers3, Play, RotateCcw } from "lucide-react";
+import { Activity, ArrowLeft, BrainCircuit, Layers3, Play, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useMemo, useState } from "react";
 import { ModelSurface3D } from "@/components/lab/canvas/ModelSurface3D";
@@ -82,11 +82,7 @@ function dataForImportedResult(result: PythonLabResult, inputSize: number, outpu
   }));
 }
 
-function buildImportedModel(
-  challenge: CurriculumTask,
-  result: PythonLabResult,
-  seed: number
-): ImportedModel {
+function buildImportedModel(challenge: CurriculumTask, result: PythonLabResult, seed: number): ImportedModel {
   const network = result.modelMeta
     ? NeuralNetwork.fromMeta(result.modelMeta, seed)
     : result.layers?.length && result.weights?.length && result.biases?.length
@@ -227,8 +223,7 @@ export function AiCodeLabWorkspace() {
 
   const activeSelection = hovered ?? selected;
   const hasEpisodeRewards = Boolean(imported?.modelMeta?.episodeRewards?.length);
-  const activeVisualizationMode =
-    visualizationMode === "rl-reward" && !hasEpisodeRewards ? "weights" : visualizationMode;
+  const activeVisualizationMode = visualizationMode === "rl-reward" && !hasEpisodeRewards ? "weights" : visualizationMode;
   const activeLoss = imported?.network.evaluateLoss(imported.data) ?? null;
   const layerText = useMemo(
     () => imported?.network.getLayerSizes().join(" → ") ?? "model bekleniyor",
@@ -237,24 +232,23 @@ export function AiCodeLabWorkspace() {
 
   return (
     <WorkbenchShell>
-      <div className="grid h-full grid-rows-[56px_minmax(0,1fr)]">
-        <header className="flex h-full items-center justify-between border-b border-[#dbe3ee] bg-white px-4">
-          <div className="flex min-w-0 items-center gap-2.5">
+      <div className="grid h-full min-h-0 grid-rows-[48px_1fr] overflow-hidden">
+        {/* Compact header */}
+        <header className="flex h-12 shrink-0 items-center justify-between border-b border-[#dbe3ee] bg-white px-3">
+          <div className="flex min-w-0 items-center gap-2">
             <Link
               href="/"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#cbd5e1] bg-white text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[#cbd5e1] bg-white text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
               aria-label="Sandbox sayfasına dön"
             >
-              <ArrowLeft className="h-4 w-4" />
+              <ArrowLeft className="h-3.5 w-3.5" />
             </Link>
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#e8f0ff] text-[#2563eb]">
-              <BrainCircuit className="h-[18px] w-[18px]" />
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#e8f0ff] text-[#2563eb]">
+              <BrainCircuit className="h-4 w-4" />
             </div>
             <div className="min-w-0">
-              <div className="truncate text-sm font-semibold">AI Kod Labı</div>
-              <div className="truncate text-[11px] text-[#607089]">
-                Editörde kodla, ağı önizle, görevi tamamla
-              </div>
+              <div className="truncate text-sm font-semibold leading-4">AI Kod Labı</div>
+              <div className="truncate text-[10px] leading-3 text-[#607089]">Editörde kodla, ağı önizle, görevi tamamla</div>
             </div>
           </div>
 
@@ -283,20 +277,21 @@ export function AiCodeLabWorkspace() {
             </IconToolbar>
             <button
               type="button"
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-[#cbd5e1] bg-white px-2.5 text-xs font-semibold text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
+              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-[#cbd5e1] bg-white px-2 text-[11px] font-semibold text-[#334155] hover:border-[#2563eb] hover:text-[#2563eb]"
               onClick={() => {
                 setPhase("forward");
                 window.setTimeout(() => setPhase("backward"), 620);
                 window.setTimeout(() => setPhase("idle"), 1380);
               }}
             >
-              <Play className="h-4 w-4" />
+              <Play className="h-3.5 w-3.5" />
               Akışı Oynat
             </button>
           </div>
         </header>
 
-        <div className="min-h-0 bg-[#d7dde8]">
+        {/* Workspace content - always fills remaining height, never scrolls */}
+        <div className="min-h-0">
           <AiCodeLab
             onApplyResult={applyResult}
             onLiveResult={applyLiveResult}
@@ -321,18 +316,19 @@ export function AiCodeLabWorkspace() {
                     modelMeta={imported.modelMeta}
                   />
                 ) : (
-                  <div className="flex h-full items-start justify-start p-5">
-                    <div className="max-w-[420px] rounded-md border border-[#dbe3ee] bg-white/88 px-4 py-3 shadow-sm backdrop-blur">
-                      <div className="flex items-center gap-2 text-xs font-semibold">
-                        <Cuboid className="h-5 w-5 text-[#2563eb]" />
+                  <div className="flex h-full items-center justify-center p-4">
+                    <div className="max-w-[320px] rounded-lg border border-[#dbe3ee] bg-white/90 px-4 py-3 text-center shadow-sm backdrop-blur">
+                      <div className="flex items-center justify-center gap-2 text-xs font-semibold text-[#18202f]">
+                        <Layers3 className="h-5 w-5 text-[#2563eb]" />
                         Model Simülasyonu
                       </div>
-                      <div className="mt-1 text-xs leading-5 text-[#526070]">Model bekleniyor.</div>
+                      <div className="mt-1 text-[11px] leading-4 text-[#526070]">Bir görev seçin veya kod yazmaya başlayın. Canlı önizleme burada görünecek.</div>
                     </div>
                   </div>
                 )}
 
-                <div className="absolute bottom-4 right-4 z-20 w-[320px]">
+                {/* Floating info toast */}
+                <div className="absolute bottom-3 right-3 z-20 w-[300px]">
                   <StatusToast
                     title={imported?.challenge.title ?? "Python sonucu bekleniyor"}
                     icon={<Activity className="h-3.5 w-3.5" />}
@@ -351,7 +347,7 @@ export function AiCodeLabWorkspace() {
                 {imported && (
                   <button
                     type="button"
-                    className="absolute left-5 top-5 z-20 inline-flex h-9 items-center gap-2 rounded-md border border-[#cbd5e1] bg-white/90 px-3 text-xs font-semibold text-[#334155] shadow-sm backdrop-blur hover:border-[#2563eb] hover:text-[#2563eb]"
+                    className="absolute left-3 top-3 z-20 inline-flex h-8 items-center gap-1.5 rounded-md border border-[#cbd5e1] bg-white/90 px-2.5 text-[11px] font-semibold text-[#334155] shadow-sm backdrop-blur hover:border-[#2563eb] hover:text-[#2563eb]"
                     onClick={() => {
                       setImported(null);
                       setSelected(null);
@@ -359,7 +355,7 @@ export function AiCodeLabWorkspace() {
                       setImportError(null);
                     }}
                   >
-                    <RotateCcw className="h-4 w-4" />
+                    <RotateCcw className="h-3.5 w-3.5" />
                     Sahneyi temizle
                   </button>
                 )}
@@ -375,7 +371,7 @@ export function AiCodeLabWorkspace() {
 function CurriculumProgressHeader({ progress }: { progress: CurriculumProgress }) {
   const summary = curriculumPhaseSummary(progress);
   return (
-    <div className="hidden min-w-[210px] grid-cols-3 gap-2 rounded-md border border-[#dbe3ee] bg-white px-2.5 py-1.5 lg:grid">
+    <div className="hidden min-w-[180px] grid-cols-3 gap-2 rounded-md border border-[#dbe3ee] bg-white px-2 py-1.5 lg:grid">
       {summary.map(({ phase, completed, total }) => (
         <div key={phase} className="min-w-0">
           <div className="flex items-center justify-between gap-1 text-[9px] font-bold uppercase tracking-[0.08em] text-[#64748b]">

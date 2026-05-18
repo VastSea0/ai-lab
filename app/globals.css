@@ -76,3 +76,11 @@ select:focus-visible {
     filter: drop-shadow(0 0 12px rgba(37, 99, 235, 0.36));
   }
 }
+
+/* CodeEditor syntax highlighting */
+.editor-keyword { color: #c678dd; }
+.editor-string { color: #98c379; }
+.editor-comment { color: #5c6370; font-style: italic; }
+.editor-number { color: #d19a66; }
+.editor-decorator { color: #e5c07b; }
+.editor-type { color: #e06c75; }
